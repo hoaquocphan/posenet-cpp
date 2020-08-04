@@ -1,7 +1,7 @@
 WORK_DIR := ${CURDIR}
 #onnxruntime: PoseNetDemo.cpp
 onnxruntime: postprocessing.cpp
-	${CXX} -std=c++14 postprocessing.cpp image.cpp \
+	${CXX} -std=c++14 postprocessing.cpp \
 	-DONNX_ML \
 	-I /data/jpeglib/ \
 	-I /media/sf_Ubuntu/posenet/posenet_demo/ \

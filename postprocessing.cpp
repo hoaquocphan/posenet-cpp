@@ -32,10 +32,11 @@
 #include <math.h>
 #include <iomanip>
 #include <sstream>
+#include <sys/stat.h>
 //#include <CommandAllocatorRing.h>
 
 #include "define.h"
-#include "image.h"
+//#include "image.h"
 //#include "constants.h"
 
 using namespace cv; 
@@ -47,6 +48,7 @@ using namespace std;
 #define RESNET_str "resnet50"
 #define MOBILENET_str "mobilenet"
 #define NUM_KEYPOINTS 17
+#define NUM_CHAIN 16
 #define LOCAL_MAXIMUM_RADIUS 1
 #define MAX_POSE_DETECTIONS 10
 #define MIN_POSE_SCORE 0.25
@@ -56,9 +58,6 @@ using namespace std;
 ******************************************/
 int model=RESNET50;
 std::string model_name = RESNET_str;
-char* output_file;
-char* input_file;
-int stride = 16;
 int quant_bytes = 4;
 float score_threshold = 0.5;
 std::map<int,std::string> label_file_map;
@@ -69,6 +68,7 @@ OrtSessionOptions* session_options;
 size_t num_input_nodes;
 size_t num_output_nodes;
 OrtStatus* status;
+
 //std::vector<const char*> input_node_names(num_input_nodes);
 //std::vector<const char*> output_node_names(num_output_nodes);
 std::vector<const char*> input_node_names(1);
@@ -121,14 +121,21 @@ int loadLabelFile(std::string label_file_name)
 }
 
 
+
+
 int main(int argc, char* argv[])
 {
     //output from model and preprocessing
+
+    int ret = 0;
     int image_size = 513;
     int stride = 16;
-    
-    int arr_size;
-    arr_size = ((image_size - 1) / stride) + 1;
+    int arr_size = ((image_size - 1) / stride) + 1;
+
+    float arr_heatmap[arr_size][arr_size][NUM_KEYPOINTS];
+    float arr_offset[arr_size][arr_size][NUM_KEYPOINTS*2];
+    float arr_fwd[arr_size][arr_size][NUM_CHAIN*2];
+    float arr_bwd[arr_size][arr_size][NUM_CHAIN*2];
 
     std::string part_names_file("part_names.txt");
     if(loadLabelFile(part_names_file) != 0)
@@ -137,20 +144,11 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-
-
-    int ret = 0;
     float* heatmap = NULL;
     float* offset = NULL;
     float* fwd = NULL;
     float* bwd = NULL;
     float num;
-
-
-    float arr_heatmap[arr_size][arr_size][NUM_KEYPOINTS];
-    float arr_offset[arr_size][arr_size][NUM_KEYPOINTS*2];
-    float arr_fwd[arr_size][arr_size][32];
-    float arr_bwd[arr_size][arr_size][32];
     float arr_temp[arr_size*arr_size*34];
     FILE *fp_heatmap;
     FILE *fp_offset;
@@ -161,7 +159,6 @@ int main(int argc, char* argv[])
     fp_fwd = fopen("output_data/displacement_fwd_result.txt", "r");
     fp_bwd = fopen("output_data/displacement_bwd_result.txt", "r");
     
-
     int i=0;
     while (fscanf(fp_heatmap, "%f", &num)!=EOF)
     {
@@ -183,7 +180,6 @@ int main(int argc, char* argv[])
             }
         }
     }
-
 
     i=0;
     while (fscanf(fp_offset, "%f", &num)!=EOF)
@@ -250,6 +246,8 @@ int main(int argc, char* argv[])
     fclose(fp_fwd);
     fclose(fp_bwd);
 
+
+
     int lmd = 2 * LOCAL_MAXIMUM_RADIUS + 1;
     float kp_scores[arr_size][arr_size];
     float max_vals[arr_size][arr_size];
@@ -284,19 +282,31 @@ int main(int argc, char* argv[])
     float image_coord[2];
     float pose_score;
     float not_overlapped_scores;
-    char input_file[1000];
-    const char* out_file = "images/out.png";
-    
+
+    char input_file[100];
+    char input_folder_file[100];
+    char output_folder[100] = "output";
+    char output_folder_file[100];
+
     FILE * image_name;
     image_name = fopen( "output_data/image_name.txt" , "r");
-    fscanf(image_name, "%s", input_file);
+    ret = fscanf(image_name, "%s", input_folder_file);
     fclose(image_name);
-    cv::Mat img = cv::imread(input_file, cv::IMREAD_COLOR);
+    for(int i = 0; i< 90; i++)
+    {
+        input_file[i] = input_folder_file[i+9];
+    }
+    strcpy(output_folder_file,output_folder);
+    strcat(output_folder_file,"/");
+    strcat(output_folder_file,input_file);
+    mkdir(output_folder, 0777);
+
+    cv::Mat img = cv::imread(input_folder_file, cv::IMREAD_COLOR);
     int thickness = 2;
     int radiusCircle = 5;
     cv::Scalar colorCircle(255,255,255);
     cv::Scalar colorLine(255, 255, 0);
-    
+
     for (int  c = 0; c < NUM_KEYPOINTS; c++)
     {
         for (int b = 0; b < arr_size; b++)
@@ -779,7 +789,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    cv::imwrite(out_file, img);
+    cv::imwrite(output_folder_file, img);
 
     return 0;
 }
