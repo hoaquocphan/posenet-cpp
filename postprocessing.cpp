@@ -266,7 +266,6 @@ int main(int argc, char* argv[])
     int root_id;
     float root_coord[2];
     float root_image_coords[2];
-    int temp_id;
     int pose_count = 0;
     float instance_keypoint_scores[NUM_KEYPOINTS];
     float instance_keypoint_coords[NUM_KEYPOINTS][2];
@@ -287,6 +286,17 @@ int main(int argc, char* argv[])
     float not_overlapped_scores;
     char input_file[1000];
     const char* out_file = "images/out.png";
+    
+    FILE * image_name;
+    image_name = fopen( "output_data/image_name.txt" , "r");
+    fscanf(image_name, "%s", input_file);
+    fclose(image_name);
+    cv::Mat img = cv::imread(input_file, cv::IMREAD_COLOR);
+    int thickness = 2;
+    int radiusCircle = 5;
+    cv::Scalar colorCircle(255,255,255);
+    cv::Scalar colorLine(255, 255, 0);
+    
     for (int  c = 0; c < NUM_KEYPOINTS; c++)
     {
         for (int b = 0; b < arr_size; b++)
@@ -373,38 +383,16 @@ int main(int argc, char* argv[])
         }
     }
 
-/*
-    for (int i = 0; i < part_index; i++)
-    {
-        printf(" \n");
-        printf("Value of n=%f \n",  parts[i][0]); // root_score
-        printf("Value of n=%f \n",  parts[i][1]); //root_id
-        printf("Value of n=%f \n",  parts[i][2]); // coor y
-        printf("Value of n=%f \n",  parts[i][3]); // coor x
-    }
-*/
-
     for (int i = 0; i < part_index; i++)
     {
         root_score = parts[i][0];
         root_id = int(parts[i][1]);
         root_coord[1] = parts[i][2];
         root_coord[0] = parts[i][3];
-        //if(temp_id == root_id) continue;
         squared_nms_radius = pow(nms_radius,2);
-        
-        //printf(" \n");
-        //printf("Value of n = %f \n",  root_score);
-        //printf("Value of n = %d \n",  root_id);
-        //printf("Value of n = %f \n",  root_coord[0]);
-        //printf("Value of n = %f \n",  root_coord[1]);
-
         
         root_image_coords[0] = root_coord[0] * float(stride) + arr_offset[int(root_coord[0])][int(root_coord[1])][root_id]; 
         root_image_coords[1] = root_coord[1] * float(stride) + arr_offset[int(root_coord[0])][int(root_coord[1])][root_id + 17]; 
-
-        //printf("Value of n = %f \n",  root_image_coord_x);
-
 
         if(pose_count != 0)
         {
@@ -713,30 +701,20 @@ int main(int argc, char* argv[])
         }
     }
 
-    FILE * image_name;
-    image_name = fopen( "output_data/image_name.txt" , "r");
-    fscanf(image_name, "%s", input_file);
-    fclose(image_name);
-    cv::Mat img = cv::imread(input_file, cv::IMREAD_COLOR);
-    int thickness = 2;
-    cv::Scalar colorCircle(255,255,255);
-    cv::Scalar colorLine(255, 255, 0);
-
     for(int pose_id=0; pose_id < pose_count; pose_id++)
     {
-        
         for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
         {
             //####################(  Draw keypoints  )#########################
             if(pose_keypoint_scores[pose_id][keypoint_id] >= MIN_POSE_SCORE)
             {
                 cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][1],pose_keypoint_coords[pose_id][keypoint_id][0]);
-                int radiusCircle = 5;
                 cv::circle(img, centerCircle, radiusCircle, colorCircle, thickness);
             }
         }
         for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
         {
+            //####################(  Draw skeleton  )#########################
             if((keypoint_id == 15) && (pose_keypoint_scores[pose_id][15] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
             {
                 cv::Point p1(pose_keypoint_coords[pose_id][15][1],pose_keypoint_coords[pose_id][15][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
@@ -799,9 +777,6 @@ int main(int argc, char* argv[])
                 cv::line(img, p1, p2, colorLine, thickness);
             }
         }
-        //####################(  Draw skeleton  )#########################
-
-
     }
 
     cv::imwrite(out_file, img);
