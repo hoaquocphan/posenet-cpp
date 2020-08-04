@@ -111,7 +111,6 @@ int loadLabelFile(std::string label_file_name)
     while(std::getline(infile,line))
     {
         label_file_map[counter++] = line;
-        //printf("line = %s \n",  label_file_map[counter-1].c_str());
     }
     if (infile.bad())
     {
@@ -286,6 +285,8 @@ int main(int argc, char* argv[])
     float image_coord[2];
     float pose_score;
     float not_overlapped_scores;
+    char input_file[1000];
+    const char* out_file = "images/out.png";
     for (int  c = 0; c < NUM_KEYPOINTS; c++)
     {
         for (int b = 0; b < arr_size; b++)
@@ -711,6 +712,99 @@ int main(int argc, char* argv[])
             printf("score = %f, coord = [%f %f]\n",  pose_keypoint_scores[pose_id][keypoint_id], pose_keypoint_coords[pose_id][keypoint_id][0], pose_keypoint_coords[pose_id][keypoint_id][1]);
         }
     }
+
+    FILE * image_name;
+    image_name = fopen( "output_data/image_name.txt" , "r");
+    fscanf(image_name, "%s", input_file);
+    fclose(image_name);
+    cv::Mat img = cv::imread(input_file, cv::IMREAD_COLOR);
+    int thickness = 2;
+    cv::Scalar colorCircle(255,255,255);
+    cv::Scalar colorLine(255, 255, 0);
+
+    for(int pose_id=0; pose_id < pose_count; pose_id++)
+    {
+        
+        for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+        {
+            //####################(  Draw keypoints  )#########################
+            if(pose_keypoint_scores[pose_id][keypoint_id] >= MIN_POSE_SCORE)
+            {
+                cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][1],pose_keypoint_coords[pose_id][keypoint_id][0]);
+                int radiusCircle = 5;
+                cv::circle(img, centerCircle, radiusCircle, colorCircle, thickness);
+            }
+        }
+        for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+        {
+            if((keypoint_id == 15) && (pose_keypoint_scores[pose_id][15] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][15][1],pose_keypoint_coords[pose_id][15][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 5) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 7) && (pose_keypoint_scores[pose_id][7] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][9] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][7][1],pose_keypoint_coords[pose_id][7][0]), p2(pose_keypoint_coords[pose_id][9][1],pose_keypoint_coords[pose_id][9][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 7) && (pose_keypoint_scores[pose_id][7] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][7][1],pose_keypoint_coords[pose_id][7][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            
+            if((keypoint_id == 16) && (pose_keypoint_scores[pose_id][16] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][14] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][16][1],pose_keypoint_coords[pose_id][16][0]), p2(pose_keypoint_coords[pose_id][14][1],pose_keypoint_coords[pose_id][14][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 12) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][14] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]), p2(pose_keypoint_coords[pose_id][14][1],pose_keypoint_coords[pose_id][14][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 12) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]), p2(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 8) && (pose_keypoint_scores[pose_id][8] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][8][1],pose_keypoint_coords[pose_id][8][0]), p2(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 8) && (pose_keypoint_scores[pose_id][8] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][10] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][8][1],pose_keypoint_coords[pose_id][8][0]), p2(pose_keypoint_coords[pose_id][10][1],pose_keypoint_coords[pose_id][10][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+        }
+        //####################(  Draw skeleton  )#########################
+
+
+    }
+
+    cv::imwrite(out_file, img);
 
     return 0;
 }
