@@ -35,7 +35,7 @@
 #include <sys/stat.h>
 //#include <CommandAllocatorRing.h>
 
-#include "define.h"
+//#include "define.h"
 //#include "image.h"
 //#include "constants.h"
 
@@ -56,11 +56,12 @@ using namespace std;
 /*****************************************
 * Global Variables
 ******************************************/
-int model=RESNET50;
+//int model=RESNET50;
 std::string model_name = RESNET_str;
 int quant_bytes = 4;
 float score_threshold = 0.5;
 std::map<int,std::string> label_file_map;
+std::map<int,std::string> label_chain_map;
 // ONNX Runtime variables
 OrtEnv* env;
 OrtSession* session;
@@ -97,30 +98,36 @@ void CheckStatus(OrtStatus* status)
 * Arguments         :
 * Return value  :
 ******************************************/
-int loadLabelFile(std::string label_file_name)
+int loadLabelFile(std::string label_file_name,std::string label_chain_name)
 {
-    int counter = 0;
+    int counter_part = 0;
+    int counter_chain = 0;
     std::ifstream infile(label_file_name);
+    std::ifstream inchain(label_chain_name);
 
-    if (!infile.is_open())
+    if (!infile.is_open() || !inchain.is_open())
     {
         perror("error while opening file");
         return -1;
     }
-    std::string line;
-    while(std::getline(infile,line))
+
+    std::string line_file, line_chain;
+    while(std::getline(infile,line_file))
     {
-        label_file_map[counter++] = line;
+        label_file_map[counter_part++] = line_file;
     }
-    if (infile.bad())
+    while(std::getline(inchain,line_chain))
+    {
+        label_chain_map[counter_chain++] = line_chain;
+    }
+
+    if (infile.bad() || inchain.bad())
     {
         perror("error while reading file");
         return -1;
     }
     return 0;
 }
-
-
 
 
 int main(int argc, char* argv[])
@@ -138,9 +145,10 @@ int main(int argc, char* argv[])
     float arr_bwd[arr_size][arr_size][NUM_CHAIN*2];
 
     std::string part_names_file("part_names.txt");
-    if(loadLabelFile(part_names_file) != 0)
+    std::string chain_names_file("chain_names.txt");
+    if(loadLabelFile(part_names_file,chain_names_file) != 0)
     {
-        fprintf(stderr,"Fail to open or process file %s\n",part_names_file.c_str());
+        fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
         return -1;
     }
 
@@ -287,6 +295,9 @@ int main(int argc, char* argv[])
     char input_folder_file[100];
     char output_folder[100] = "output";
     char output_folder_file[100];
+    char part[100];
+    char source_part[100];
+    char dest_part[100];
 
     FILE * image_name;
     image_name = fopen( "output_data/image_name.txt" , "r");
@@ -435,79 +446,20 @@ int main(int argc, char* argv[])
 
         for(int edge = num_edges-1; edge >= 0; edge--)
         {
-            switch(edge)
+            strcpy(source_part,label_chain_map[edge+NUM_CHAIN].c_str());
+            strcpy(dest_part,label_chain_map[edge].c_str());
+            
+            for(int part_id=0; part_id < NUM_KEYPOINTS; part_id++)
             {
-                case 15:
-                    source_keypoint_id = 16;
-                    target_keypoint_id = 14;
-                break;
-                case 14:
-                    source_keypoint_id = 14;
-                    target_keypoint_id = 12;
-                break;
-                case 13:
-                    source_keypoint_id = 12;
-                    target_keypoint_id = 6;
-                break;
-                case 12:
-                    source_keypoint_id = 10;
-                    target_keypoint_id = 8;
-                break;
-                case 11:
-                    source_keypoint_id = 8;
-                    target_keypoint_id = 6;
-                break;
-                case 10:
-                    source_keypoint_id = 6;
-                    target_keypoint_id = 0;
-                break;
-                case 9:
-                    source_keypoint_id = 15;
-                    target_keypoint_id = 13;
-                break;
-                case 8:
-                    source_keypoint_id = 13;
-                    target_keypoint_id = 11;
-                break;
-                case 7:
-                    source_keypoint_id = 11;
-                    target_keypoint_id = 5;
-                break;
-                case 6:
-                    source_keypoint_id = 9;
-                    target_keypoint_id = 7;
-                break;
-                case 5:
-                    source_keypoint_id = 7;
-                    target_keypoint_id = 5;
-                break;
-                case 4:
-                    source_keypoint_id = 5;
-                    target_keypoint_id = 0;
-                break;
-                case 3:
-                    source_keypoint_id = 4;
-                    target_keypoint_id = 2;
-                break;
-                case 2:
-                    source_keypoint_id = 2;
-                    target_keypoint_id = 0;
-                break;
-                case 1:
-                    source_keypoint_id = 3;
-                    target_keypoint_id = 1;
-                break;
-                case 0:
-                    source_keypoint_id = 1;
-                    target_keypoint_id = 0;
-                break;
-
-                default:
-                break;
+                if(strcmp(source_part,label_file_map[part_id].c_str()) == 0) source_keypoint_id = part_id;
+                if(strcmp(dest_part,label_file_map[part_id].c_str()) == 0) target_keypoint_id = part_id;
             }
-
-            //printf("instance_keypoint_scores[source_keypoint_id]: %f \n",  instance_keypoint_scores[source_keypoint_id]);
-            //printf("instance_keypoint_scores[target_keypoint_id]: %f \n",  instance_keypoint_scores[target_keypoint_id]);
+            
+            if(edge == 15)
+            {
+                source_keypoint_id = 16;
+                target_keypoint_id = 14;
+            }
             
             if((instance_keypoint_scores[source_keypoint_id] > 0) && (instance_keypoint_scores[target_keypoint_id] == 0))
             {
@@ -541,80 +493,20 @@ int main(int argc, char* argv[])
 
         for(int edge = 0; edge < num_edges; edge++)
         {
-            switch(edge)
+
+            strcpy(source_part,label_chain_map[edge].c_str());
+            strcpy(dest_part,label_chain_map[edge+NUM_CHAIN].c_str());
+            for(int part_id=0; part_id < NUM_KEYPOINTS; part_id++)
             {
-                case 15:
-                    source_keypoint_id = 14;
-                    target_keypoint_id = 16;
-                break;
-                case 14:
-                    source_keypoint_id = 12;
-                    target_keypoint_id = 14;
-                break;
-                case 13:
-                    source_keypoint_id = 6;
-                    target_keypoint_id = 12;
-                break;
-                case 12:
-                    source_keypoint_id = 8;
-                    target_keypoint_id = 10;
-                break;
-                case 11:
-                    source_keypoint_id = 6;
-                    target_keypoint_id = 8;
-                break;
-                case 10:
-                    source_keypoint_id = 0;
-                    target_keypoint_id = 6;
-                break;
-                case 9:
-                    source_keypoint_id = 13;
-                    target_keypoint_id = 15;
-                break;
-                case 8:
-                    source_keypoint_id = 11;
-                    target_keypoint_id = 13;
-                break;
-                case 7:
-                    source_keypoint_id = 5;
-                    target_keypoint_id = 11;
-                break;
-                case 6:
-                    source_keypoint_id = 7;
-                    target_keypoint_id = 9;
-                break;
-                case 5:
-                    source_keypoint_id = 5;
-                    target_keypoint_id = 7;
-                break;
-                case 4:
-                    source_keypoint_id = 0;
-                    target_keypoint_id = 5;
-                break;
-                case 3:
-                    source_keypoint_id = 2;
-                    target_keypoint_id = 4;
-                break;
-                case 2:
-                    source_keypoint_id = 0;
-                    target_keypoint_id = 2;
-                break;
-                case 1:
-                    source_keypoint_id = 1;
-                    target_keypoint_id = 3;
-                break;
-                case 0:
-                    source_keypoint_id = 0;
-                    target_keypoint_id = 1;
-                break;
-
-                default:
-                break;
+                if(strcmp(source_part,label_file_map[part_id].c_str()) == 0) source_keypoint_id = part_id;
+                if(strcmp(dest_part,label_file_map[part_id].c_str()) == 0) target_keypoint_id = part_id;
             }
-
-            //printf("edge: %d \n",  edge);
-            //printf("instance_keypoint_scores[source_keypoint_id]: %f \n",  instance_keypoint_scores[source_keypoint_id]);
-            //printf("instance_keypoint_scores[target_keypoint_id]: %f \n",  instance_keypoint_scores[target_keypoint_id]);
+            
+            if(edge == 15)
+            {
+                source_keypoint_id = 14;
+                target_keypoint_id = 16;
+            }
             
             if((instance_keypoint_scores[source_keypoint_id] > 0) && (instance_keypoint_scores[target_keypoint_id] == 0))
             {
@@ -699,7 +591,9 @@ int main(int argc, char* argv[])
             }
             pose_count += 1;
         }
+        if(pose_count >= MAX_POSE_DETECTIONS) break;
     }
+    
     for(int pose_id=0; pose_id < pose_count; pose_id++)
     {
         if(pose_scores[pose_id] == 0) break;
