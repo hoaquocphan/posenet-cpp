@@ -1,7 +1,7 @@
 WORK_DIR := ${CURDIR}
 #onnxruntime: PoseNetDemo.cpp
-onnxruntime: PoseNetDemo.cpp
-	${CXX} -std=c++14 PoseNetDemo.cpp image.cpp \
+onnxruntime: postprocessing.cpp
+	${CXX} -std=c++14 postprocessing.cpp \
 	-DONNX_ML \
 	-I /data/jpeglib/ \
 	-I /media/sf_Ubuntu/posenet/posenet_demo/ \
@@ -25,7 +25,7 @@ onnxruntime: PoseNetDemo.cpp
 	-lonnxruntime_mlas \
 	-lonnx \
 	-ljpeg -ltbb -ltiff -lopencv_core -lopencv_highgui -lopencv_imgproc -lopencv_photo -lopencv_imgcodecs \
-	-lpthread -O2 -fopenmp -ldl ${LDFLAGS} -o PoseNetDemo
+	-lpthread -O2 -fopenmp -ldl ${LDFLAGS} -o postprocessing
 
 clean:
-	rm -rf *.o PoseNetDemo 
+	rm -rf *.o postprocessing 
