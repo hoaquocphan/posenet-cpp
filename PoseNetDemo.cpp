@@ -51,16 +51,29 @@ using namespace std;
 ******************************************/
 #define RESNET_str "resnet50"
 #define MOBILENET_str "mobilenet"
+#define NUM_KEYPOINTS 17
+#define NUM_CHAIN 16
+#define LOCAL_MAXIMUM_RADIUS 1
+#define MAX_POSE_DETECTIONS 10
+#define MIN_POSE_SCORE 0.25
+//#define MIN_POSE_SCORE 0.1
 
 /*****************************************
 * Global Variables
 ******************************************/
 int model=RESNET50;
 std::string model_name = RESNET_str;
-char* output_file;
+char* output_folder_file;
 char* input_file;
-int stride = 16;
+char* input_folder_file;
+int stride = 32;
 int quant_bytes = 4;
+float score_threshold = 0.5;
+std::map<int,std::string> label_file_map;
+std::map<int,std::string> label_chain_map;
+
+int tget_wid = 257;
+int tget_hei = 257;
 
 // ONNX Runtime variables
 OrtEnv* env;
@@ -129,9 +142,9 @@ int parse_argument(int argc, char* argv[])
 		} else if (!strcmp("-stride", argv[index])) {
 			stride = atoi(argv[index+1]);
 		} else if (!strcmp("-ifile", argv[index])) {
-			input_file = argv[index+1];
+			input_folder_file = argv[index+1];
 		} else if (!strcmp("-ofile", argv[index])) {
-			output_file = argv[index+1];
+			output_folder_file = argv[index+1];
 		} else if (!strcmp("-quant_bytes", argv[index])) {
 			quant_bytes = atoi(argv[index+1]);
 		}
@@ -159,6 +172,43 @@ int parse_argument(int argc, char* argv[])
     return ret;
 }
 
+/*****************************************
+* Function Name :  loadLabelFile
+* Description       : Load txt file
+* Arguments         :
+* Return value  :
+******************************************/
+int loadLabelFile(std::string label_file_name,std::string label_chain_name)
+{
+    int counter_part = 0;
+    int counter_chain = 0;
+    std::ifstream infile(label_file_name);
+    std::ifstream inchain(label_chain_name);
+
+    if (!infile.is_open() || !inchain.is_open())
+    {
+        perror("error while opening file");
+        return -1;
+    }
+
+    std::string line_file, line_chain;
+    while(std::getline(infile,line_file))
+    {
+        label_file_map[counter_part++] = line_file;
+    }
+    while(std::getline(inchain,line_chain))
+    {
+        label_chain_map[counter_chain++] = line_chain;
+    }
+
+    if (infile.bad() || inchain.bad())
+    {
+        perror("error while reading file");
+        return -1;
+    }
+    return 0;
+}
+
 // valid resolution
 void valid_resolution(int width, int height, int *target_width, int *target_height) {
     *target_width = (width / stride) * stride +1;
@@ -182,91 +232,31 @@ void prepare_ONNX_Runtime() {
     printf("Start Loading Model %s\n", model_name.c_str());
 }
 
-cv::Mat add_means_of_RGB_channel(cv::Mat _img, cv::Scalar image_net_mean) {
-
-    cv::Mat img;
-
-    _img.convertTo(img, CV_32FC3);
-   
-    //struct S_Pixel
-    //{
-    //    unsigned char RGBA[3];
-    //};
-    int img_sizex = img.cols;
-    int img_sizey = img.rows;
-
-/* 
-    for ( size_t y = 0; y < 5; y++){
-        for ( size_t x = 0; x < 5; x++){
-            cout << "Before" << endl;
-            cout << "img[" << x << "," << y << "][0] = " << img.at<cv::Vec3f>(x,y)[0] << endl;
-            cout << "img[" << x << "," << y << "][1] = " << img.at<cv::Vec3f>(x,y)[1] << endl;
-            cout << "img[" << x << "," << y << "][2] = " << img.at<cv::Vec3f>(x,y)[2] << endl;
-        }
-    }
-*/ 
-
-// hard code here, check again
-    for ( size_t y = 0; y < img_sizey; y++){
-        for ( size_t x = 0; x < img_sizex; x++){
-            img.at<cv::Vec3f>(x,y)[0] += image_net_mean[0]; //-123.15;
-            img.at<cv::Vec3f>(x,y)[1] += image_net_mean[1]; //-115.90;
-            img.at<cv::Vec3f>(x,y)[2] += image_net_mean[2]; //-103.06;
-        }
-    }
-/* 
-    for ( size_t y = 0; y < 5; y++) {
-        for ( size_t x = 0; x < 5; x++) {
-            cout << "After" << endl;
-            cout << "img[" << x << "," << y << "][0] = " << img.at<cv::Vec3f>(x,y)[0] << endl;
-            cout << "img[" << x << "," << y << "][1] = " << img.at<cv::Vec3f>(x,y)[1] << endl;
-            cout << "img[" << x << "," << y << "][2] = " << img.at<cv::Vec3f>(x,y)[2] << endl;
-        }
-    }    
-    printf("after plus\n");
-*/
-    return img;
-}
-
-cv::Mat mobilenet_process_input(cv::Mat _img)
-{
-    cv::Mat img;
-    //input_img = input_img * (2.0 / 255.0) - 1.0  // normalize to [-1,1]
-    //input_img = input_img.reshape(1, target_height, target_width, 3)  // NHWC
-
-    cv::Scalar image_net_mean(-123.15, -115.90, -103.06);
-    img = add_means_of_RGB_channel(_img, image_net_mean);
-    img = img/255;
-
-    return img;
-}
-
-cv::Mat resnet_process_input(cv::Mat _img)
-{
-    cv::Mat img;
-    //cv::Scalar image_net_mean(-123.15, -115.90, -103.06);
-    //img_update = add_means_of_RGB_channel(img, image_net_mean);
-    //img_update = img_update/255;
-    return img;
-}
 
 int preprocess_input() {
     int ret=0;
     const char* mat_out = "mat_out.jpg";
-    int tget_wid, tget_hei, in_wid, in_hei, in_channel;
+    int in_wid, in_hei, in_channel;
     in_channel = 3;
     int img_sizex, img_sizey, img_channels;
 
+    std::string part_names_file("part_names.txt");
+    std::string chain_names_file("chain_names.txt");
+    if(loadLabelFile(part_names_file,chain_names_file) != 0)
+    {
+        fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
+        return -1;
+    }
     // process image
-    cv::Mat _img = cv::imread(input_file, cv::IMREAD_COLOR);  
+    cv::Mat _img = cv::imread(input_folder_file, cv::IMREAD_COLOR);  
     cv::Mat img;
     cv::Mat img_update;   
 
     valid_resolution(_img.cols, _img.rows, (int*) &tget_wid, (int*) &tget_hei); 
     //this model use fixed 257x257 image with stride = 32
+
     tget_wid = 257;
     tget_hei = 257;
-
     cv::resize(_img, img, cv::Size(tget_wid, tget_hei), 0, 0, CV_INTER_LINEAR);
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
 
@@ -292,12 +282,18 @@ int preprocess_input() {
     }
     else if(model == RESNET50)
     {
-        //cv::Scalar image_net_mean(-123.15, -115.90, -103.06);
-        //img_update = add_means_of_RGB_channel(img, image_net_mean);
-        //img_update = img_update/255;
+        float image_net_mean[3] = {-123.15, -115.90, -103.06 };
+        int offs = 0;
+        for (int c = 0; c < 3; c++){
+            for (int y = 0; y < img_sizey; y++){
+                for (int x = 0; x < img_sizex; x++, offs++){
+                    const int val(imgPixels[y * img_sizex + x].RGBA[c]);
+                    input_tensor_values[offs] = (float)val + image_net_mean[c]; // for resnet
+                }
+            }
+        }
     }
     
-
     // create input tensor object from data values
     OrtMemoryInfo* memory_info;
     CheckStatus(g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info));
@@ -360,7 +356,7 @@ int preprocess_input() {
         char* output_name;
         CheckStatus(g_ort->GetAllocatorWithDefaultOptions(&allocator));
         CheckStatus(g_ort->SessionGetOutputName(session, i, allocator, &output_name));
-        //printf("output %d : name=%s\n", i, output_name);
+        printf("output %d : name=%s\n", i, output_name);
         output_node_names[i] = output_name;
         // print input node types
         OrtTypeInfo* typeinfo;
@@ -369,10 +365,10 @@ int preprocess_input() {
         CheckStatus(g_ort->CastTypeInfoToTensorInfo(typeinfo,&tensor_info));
         ONNXTensorElementDataType type;
         CheckStatus(g_ort->GetTensorElementType(tensor_info,&type));
-        printf("Output : output_name=%s\n",  output_node_names[i]);
-        printf("Output %d : type=%d\n", i, type);
         // print input shapes/dims
+        printf("Output : output_name=%s\n",  output_node_names[i]);
         size_t num_dims = 4;
+        printf("Output %d : type=%d\n", i, type);
         printf("Output %d : num_dims=%zu\n", i, num_dims);
         output_node_dims.resize(num_dims);
         g_ort->GetDimensions(tensor_info, (int64_t*)output_node_dims.data(), num_dims);
@@ -389,13 +385,25 @@ int preprocess_input() {
     return ret;
 }
 
-int postprocess() {
+int postprocess() 
+{
     int ret = 0;
-
+    int image_size = 257;
+    int stride = 32;
+    int arr_size = ((image_size - 1) / stride) + 1;
     // check output tensor
+    
+    /*
+    float max_score=0;
+    for(int i=0; i< arr_size*arr_size*NUM_KEYPOINTS; i++)
+    {
+        //out_data[0][i] = sigmoid(out_data[0][i]);
+        //printf("output 0: %f\n", out_data[0][i]);
+        if(max_score<out_data[0][i]) max_score = out_data[0][i];
+    }
     for(int i=0; i< 20; i++)
     {
-        printf("output 0: %f\n", sigmoid(out_data[0][i]));
+        printf("output 0: %f\n", out_data[0][i]);
     }
     for(int i=0; i< 20; i++)
     {
@@ -409,13 +417,503 @@ int postprocess() {
     {
         printf("output 3: %f\n", out_data[3][i]);
     }
+    
+   printf("max_score: %f\n", max_score);
+*/
+    int lmd = 2 * LOCAL_MAXIMUM_RADIUS + 1;
+    float arr_heatmap[arr_size][arr_size][NUM_KEYPOINTS];
+    float arr_offset[arr_size][arr_size][NUM_KEYPOINTS*2];
+    float arr_fwd[arr_size][arr_size][NUM_CHAIN*2];
+    float arr_bwd[arr_size][arr_size][NUM_CHAIN*2];
+    float kp_scores[arr_size][arr_size];
+    float max_vals[arr_size][arr_size];
+    int max_loc[arr_size][arr_size];
+    float parts[arr_size*arr_size*NUM_KEYPOINTS][4];
+    float max_heat=0;
+    int square_x1;
+    int square_x2;
+    int square_y1;
+    int square_y2;
+    int flag = 0;
+    int part_num = 0;
+    float root_score;
+    int root_id;
+    float root_coord[2];
+    float root_image_coords[2];
+    int pose_count = 0;
+    float instance_keypoint_scores[NUM_KEYPOINTS];
+    float instance_keypoint_coords[NUM_KEYPOINTS][2];
+    float pose_scores[MAX_POSE_DETECTIONS];
+    float pose_keypoint_scores[MAX_POSE_DETECTIONS][NUM_KEYPOINTS];
+    float pose_keypoint_coords[MAX_POSE_DETECTIONS][NUM_KEYPOINTS][2];
+    int squared_nms_radius;
+    int nms_radius = 20;
+    //int num_parts = label_file_map.size();;
+    //int num_edges = label_chain_map.size()/2;
+    int num_parts = 17;
+    int num_edges = 16;
+    int target_keypoint_id, source_keypoint_id;
+    float source_keypoint_indices[2];
+    float displaced_point[2];
+    float displaced_point_indices[2];
+    float score;
+    float image_coord[2];
+    float pose_score;
+    float not_overlapped_scores;
+    char part[100];
+    char source_part[100];
+    char dest_part[100];
+    int thickness = 2;
+    int radiusCircle = 5;
+    int out_data_index=0;
+    cv::Scalar colorCircle(255,255,255);
+    cv::Scalar colorLine(255, 255, 0);
 
-    int image_size = 257;
-    int stride = 32;
-    int arr_size = ((image_size - 1) / stride) + 1;
+    cv::Mat img = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+    
+    cv::Mat img_out;
+    tget_wid = 257;
+    tget_hei = 257;
+    float scale = float(int(float(img.cols) / float(tget_wid) + 0.5));
+
+    //float max=0;
+    for (int c = 0; c < NUM_KEYPOINTS; c++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++,out_data_index++)
+            {
+                arr_heatmap[a][b][c] = sigmoid(out_data[0][out_data_index]);
+                //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
+                //if(max<arr_heatmap[a][b][c]) max = arr_heatmap[a][b][c];
+            }
+        }
+    }
+    //printf("max score=%f \n", max);
+
+    out_data_index=0;
+    for (int c = 0; c < NUM_KEYPOINTS*2; c++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++,out_data_index++)
+            {
+                arr_offset[a][b][c] = out_data[1][out_data_index];
+                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+            }
+        }
+    }
+    out_data_index=0;
+    for (int c = 0; c < 32; c++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++,out_data_index++)
+            {
+                arr_fwd[a][b][c] = out_data[2][out_data_index];
+                //printf("Value of n=%f \n", arr_fwd[a][b][c]);
+            }
+        }
+    }
+    out_data_index=0;
+    for (int c = 0; c < 32; c++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++,out_data_index++)
+            {
+                arr_bwd[a][b][c] = out_data[3][out_data_index];
+                //printf("Value of n=%f \n", arr_bwd[a][b][c]);
+            }
+        }
+    }
 
 
+    for (int  c = 0; c < NUM_KEYPOINTS; c++)
+    {
+        int part_num_key=0;
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++)
+            {
+                if(arr_heatmap[a][b][c] < score_threshold) kp_scores[a][b] = 0;
+                else 
+                {
+                    kp_scores[a][b] = arr_heatmap[a][b][c];
+                    //printf("c=%d \n", c);
+                    //printf("kp_scores[a][b]=%f \n", kp_scores[a][b]);
+                }
+            }
+        }
 
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++)
+            {
+                max_heat = kp_scores[a][b];
+                square_x1 = a - LOCAL_MAXIMUM_RADIUS;
+                square_x2 = a + LOCAL_MAXIMUM_RADIUS;
+                square_y1 = b - LOCAL_MAXIMUM_RADIUS;
+                square_y2 = b + LOCAL_MAXIMUM_RADIUS;
+                if(square_x1 < 0) square_x1 = 0;
+                if(square_y1 < 0) square_y1 = 0;
+                if(square_x2 >= arr_size) square_x2 = arr_size - 1;
+                if(square_y2 >= arr_size) square_y2 = arr_size - 1;
+
+                for(int x = square_x1; x <= square_x2; x++)
+                {
+                    for(int y = square_y1; y <= square_y2; y++)
+                    {
+                        if(max_heat < kp_scores[x][y]) max_heat = kp_scores[x][y];
+                    }
+                }
+                max_vals[a][b] = max_heat;
+                if((kp_scores[a][b] > 0) && (kp_scores[a][b] == max_vals[a][b])) max_loc[a][b] = 1;
+                else max_loc[a][b] = 0;
+            }
+        }
+
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int a = 0; a < arr_size; a++)
+            {
+                if(max_loc[a][b] == 1)
+                {
+                    parts[part_num][0] = kp_scores[a][b];
+                    parts[part_num][1] = c;   // keypoint_id
+                    parts[part_num][2] = b;
+                    parts[part_num][3] = a;
+                    //printf("parts[part_num][1]=%f \n", parts[part_num][1]);
+                    //printf("parts[part_num][0]=%f \n", parts[part_num][0]);
+                    part_num++;
+                    part_num_key++;
+                }
+            }
+        }
+        
+        //sort part base on score: high -> low
+        float part_temp[4];
+        bool finish_convert = true;
+        while(1)
+        {
+            for (int i = 0; i < part_num_key; i++)
+            {
+                if((i < part_num_key - 1) && (parts[i][0] < parts[i + 1][0]))
+                {
+                    part_temp[0] = parts[i+1][0];
+                    part_temp[1] = parts[i+1][1];
+                    part_temp[2] = parts[i+1][2];
+                    part_temp[3] = parts[i+1][3];
+                    parts[i+1][0] = parts[i][0];
+                    parts[i+1][1] = parts[i][1];
+                    parts[i+1][2] = parts[i][2];
+                    parts[i+1][3] = parts[i][3];
+                    parts[i][0] = part_temp[0];
+                    parts[i][1] = part_temp[1];
+                    parts[i][2] = part_temp[2];
+                    parts[i][3] = part_temp[3];
+                    finish_convert = false;
+                    break;
+                }
+                else
+                {
+                    finish_convert = true;
+                }
+            }
+            if(finish_convert == true) break;
+        }
+    }
+/*
+    for (int i = 0; i < part_num; i++)
+    {
+        printf("id=%f \n", parts[i][1]);
+        printf("score=%f \n", parts[i][0]);
+        printf("x=%f \n", parts[i][3]);
+        printf("y=%f \n", parts[i][2]);
+    }
+*/
+
+    for (int part_index = 0; part_index < part_num; part_index++)
+    {
+        root_score = parts[part_index][0];
+        root_id = int(parts[part_index][1]);
+        root_coord[1] = parts[part_index][2];
+        root_coord[0] = parts[part_index][3];
+        squared_nms_radius = pow(nms_radius,2);
+
+        root_image_coords[0] = root_coord[0] * float(stride) + arr_offset[int(root_coord[0])][int(root_coord[1])][root_id]; 
+        root_image_coords[1] = root_coord[1] * float(stride) + arr_offset[int(root_coord[0])][int(root_coord[1])][root_id + NUM_KEYPOINTS]; 
+
+        if(pose_count != 0)
+        {
+            float coord[pose_count][2];
+            float coord_square[pose_count];
+            bool skip_flag = false;
+            for(int pose_id = 0; pose_id < pose_count; pose_id++)
+            {
+                coord[pose_id][0] = pose_keypoint_coords[pose_id][root_id][0];
+                coord[pose_id][1] = pose_keypoint_coords[pose_id][root_id][1];
+                coord[pose_id][0] = coord[pose_id][0] - root_image_coords[0];
+                coord[pose_id][1] = coord[pose_id][1] - root_image_coords[1];
+                coord[pose_id][0] = coord[pose_id][0] * coord[pose_id][0];
+                coord[pose_id][1] = coord[pose_id][1] * coord[pose_id][1];
+                coord_square[pose_id] = coord[pose_id][0] + coord[pose_id][1];
+                if(coord_square[pose_id] <= squared_nms_radius) skip_flag = true;
+            }
+            if(skip_flag == true) continue;
+        }
+        
+        for(int id = 0; id < NUM_KEYPOINTS; id++)
+        {
+            instance_keypoint_scores[id] = 0;
+        }
+        instance_keypoint_scores[root_id] = root_score;
+        instance_keypoint_coords[root_id][0] = root_image_coords[0];
+        instance_keypoint_coords[root_id][1] = root_image_coords[1];
+
+
+        for(int edge = num_edges-1; edge >= 0; edge--)
+        {
+            strcpy(source_part,label_chain_map[edge+NUM_CHAIN].c_str());
+            strcpy(dest_part,label_chain_map[edge].c_str());
+            
+            for(int part_id=0; part_id < NUM_KEYPOINTS; part_id++)
+            {
+                if(strcmp(source_part,label_file_map[part_id].c_str()) == 0) source_keypoint_id = part_id;
+                if(strcmp(dest_part,label_file_map[part_id].c_str()) == 0) target_keypoint_id = part_id;
+            }
+            
+            if(edge == 15)
+            {
+                source_keypoint_id = 16;
+                target_keypoint_id = 14;
+            }
+            
+            if((instance_keypoint_scores[source_keypoint_id] > 0) && (instance_keypoint_scores[target_keypoint_id] == 0))
+            {
+                source_keypoint_indices[0] = float(int(instance_keypoint_coords[source_keypoint_id][0] / float(stride) + 0.5));
+                source_keypoint_indices[1] = float(int(instance_keypoint_coords[source_keypoint_id][1] / float(stride) + 0.5));
+                if(source_keypoint_indices[0] < 0) source_keypoint_indices[0] = 0;
+                else if(source_keypoint_indices[0] > ( arr_size - 1)) source_keypoint_indices[0] = arr_size - 1;
+                if(source_keypoint_indices[1] < 0) source_keypoint_indices[1] = 0;
+                else if(source_keypoint_indices[1] > (arr_size - 1)) source_keypoint_indices[1] = arr_size - 1;
+                //printf("source_keypoint_indices: [%f %f] \n",  source_keypoint_indices[0],source_keypoint_indices[1]);
+                displaced_point[0] = instance_keypoint_coords[source_keypoint_id][0] + arr_bwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge];
+                displaced_point[1] = instance_keypoint_coords[source_keypoint_id][1] + arr_bwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge+NUM_CHAIN];
+
+                displaced_point_indices[0] = float(int(displaced_point[0] / float(stride) + 0.5));
+                displaced_point_indices[1] = float(int(displaced_point[1] / float(stride) + 0.5));
+                if(displaced_point_indices[0] < 0) displaced_point_indices[0] = 0;
+                else if(displaced_point_indices[0] > (arr_size - 1)) displaced_point_indices[0] = arr_size - 1;
+                if(displaced_point_indices[1] < 0) displaced_point_indices[1] = 0;
+                else if(displaced_point_indices[1] > (arr_size - 1)) displaced_point_indices[1] = arr_size - 1;
+                //printf("displaced_point_indices: [%f %f] \n",  displaced_point_indices[0],displaced_point_indices[1]);
+                score = arr_heatmap[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id];
+                image_coord[0] = displaced_point_indices[0] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id]; 
+                image_coord[1] = displaced_point_indices[1] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id + NUM_KEYPOINTS];
+                //printf("score: %f\n",  score);
+                //printf("image_coord: [%f %f] \n",  image_coord[0],image_coord[1]);
+                instance_keypoint_scores[target_keypoint_id] = score;
+                instance_keypoint_coords[target_keypoint_id][0] = image_coord[0];
+                instance_keypoint_coords[target_keypoint_id][1] = image_coord[1];
+            }
+        }
+
+        for(int edge = 0; edge < num_edges; edge++)
+        {
+
+            strcpy(source_part,label_chain_map[edge].c_str());
+            strcpy(dest_part,label_chain_map[edge+NUM_CHAIN].c_str());
+            for(int part_id=0; part_id < NUM_KEYPOINTS; part_id++)
+            {
+                if(strcmp(source_part,label_file_map[part_id].c_str()) == 0) source_keypoint_id = part_id;
+                if(strcmp(dest_part,label_file_map[part_id].c_str()) == 0) target_keypoint_id = part_id;
+            }
+            
+            if(edge == 15)
+            {
+                source_keypoint_id = 14;
+                target_keypoint_id = 16;
+            }
+            
+            if((instance_keypoint_scores[source_keypoint_id] > 0) && (instance_keypoint_scores[target_keypoint_id] == 0))
+            {
+                source_keypoint_indices[0] = float(int(instance_keypoint_coords[source_keypoint_id][0] / float(stride) + 0.5));
+                source_keypoint_indices[1] = float(int(instance_keypoint_coords[source_keypoint_id][1] / float(stride) + 0.5));
+                if(source_keypoint_indices[0] < 0) source_keypoint_indices[0] = 0;
+                else if(source_keypoint_indices[0] > ( arr_size - 1)) source_keypoint_indices[0] = arr_size - 1;
+                if(source_keypoint_indices[1] < 0) source_keypoint_indices[1] = 0;
+                else if(source_keypoint_indices[1] > (arr_size - 1)) source_keypoint_indices[1] = arr_size - 1;
+                //printf("source_keypoint_indices: [%f %f] \n",  source_keypoint_indices[0],source_keypoint_indices[1]);
+                displaced_point[0] = instance_keypoint_coords[source_keypoint_id][0] + arr_fwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge];
+                displaced_point[1] = instance_keypoint_coords[source_keypoint_id][1] + arr_fwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge+16];
+
+                displaced_point_indices[0] = float(int(displaced_point[0] / float(stride) + 0.5));
+                displaced_point_indices[1] = float(int(displaced_point[1] / float(stride) + 0.5));
+                if(displaced_point_indices[0] < 0) displaced_point_indices[0] = 0;
+                else if(displaced_point_indices[0] > (arr_size - 1)) displaced_point_indices[0] = arr_size - 1;
+                if(displaced_point_indices[1] < 0) displaced_point_indices[1] = 0;
+                else if(displaced_point_indices[1] > (arr_size - 1)) displaced_point_indices[1] = arr_size - 1;
+                //printf("displaced_point_indices: [%f %f] \n",  displaced_point_indices[0],displaced_point_indices[1]);
+                score = arr_heatmap[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id];
+                image_coord[0] = displaced_point_indices[0] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id]; 
+                image_coord[1] = displaced_point_indices[1] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id + 17];
+                //printf("score: %f\n",  score);
+                //printf("image_coord: [%f %f] \n",  image_coord[0],image_coord[1]);
+                instance_keypoint_scores[target_keypoint_id] = score;
+                instance_keypoint_coords[target_keypoint_id][0] = image_coord[0];
+                instance_keypoint_coords[target_keypoint_id][1] = image_coord[1];
+            }
+        }
+
+        not_overlapped_scores = 0;
+        if(pose_count != 0)
+        {
+            float coord_cal[pose_count][NUM_KEYPOINTS][2];
+            float coord_square_cal[pose_count][NUM_KEYPOINTS];
+            bool bigger = false;
+            for(int pose_id = 0; pose_id < pose_count; pose_id++)
+            {
+                for(int key = 0; key < NUM_KEYPOINTS; key++)
+                {
+                    coord_cal[pose_id][key][0] = pose_keypoint_coords[pose_id][key][0];
+                    coord_cal[pose_id][key][1] = pose_keypoint_coords[pose_id][key][1];
+                    coord_cal[pose_id][key][0] -= instance_keypoint_coords[key][0];
+                    coord_cal[pose_id][key][1] -= instance_keypoint_coords[key][1];
+                    coord_cal[pose_id][key][0] = coord_cal[pose_id][key][0] * coord_cal[pose_id][key][0];
+                    coord_cal[pose_id][key][1] = coord_cal[pose_id][key][1] * coord_cal[pose_id][key][1];
+                    coord_square_cal[pose_id][key] = coord_cal[pose_id][key][0] + coord_cal[pose_id][key][1];
+                }
+            }
+            for(int key = 0; key < NUM_KEYPOINTS; key++)
+            {
+                for(int pose_id = 0; pose_id < pose_count; pose_id++)
+                {
+                    if(coord_square_cal[pose_id][key] > squared_nms_radius) bigger = true;
+                    else
+                    {
+                        bigger = false;
+                        break;
+                    }
+                }
+                if(bigger == true) not_overlapped_scores += instance_keypoint_scores[key];
+            }
+        }
+        else
+        {
+            for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+            {
+                not_overlapped_scores += instance_keypoint_scores[keypoint_id];
+            }
+        }
+        pose_score = not_overlapped_scores / NUM_KEYPOINTS;
+
+        if(pose_score >= MIN_POSE_SCORE)
+        {
+            pose_scores[pose_count] = pose_score;
+            for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+            {
+                pose_keypoint_scores[pose_count][keypoint_id] = instance_keypoint_scores[keypoint_id];
+                pose_keypoint_coords[pose_count][keypoint_id][0] = instance_keypoint_coords[keypoint_id][0];
+                pose_keypoint_coords[pose_count][keypoint_id][1] = instance_keypoint_coords[keypoint_id][1];
+            }
+            pose_count += 1;
+        }
+        if(pose_count >= MAX_POSE_DETECTIONS) break;
+    }
+
+    for(int pose_id=0; pose_id < pose_count; pose_id++)
+    {
+        if(pose_scores[pose_id] == 0) break;
+        printf("\nPose %d, score = %f \n",  pose_id,pose_scores[pose_id]);
+        for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+        {
+            printf(" Keypoint = %s \n",  label_file_map[keypoint_id].c_str());
+            printf("score = %f, coord = [%f %f]\n",  pose_keypoint_scores[pose_id][keypoint_id], pose_keypoint_coords[pose_id][keypoint_id][0], pose_keypoint_coords[pose_id][keypoint_id][1]);
+        }
+    }
+
+/*
+    for(int pose_id=0; pose_id < pose_count; pose_id++)
+    {
+        for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+        {
+            //####################(  Draw keypoints  )#########################
+            if(pose_keypoint_scores[pose_id][keypoint_id] >= MIN_POSE_SCORE)
+            {
+                cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][1],pose_keypoint_coords[pose_id][keypoint_id][0]);
+                cv::circle(img, centerCircle, radiusCircle, colorCircle, thickness);
+            }
+        }
+        for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
+        {
+            //####################(  Draw skeleton  )#########################
+            if((keypoint_id == 15) && (pose_keypoint_scores[pose_id][15] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][15][1],pose_keypoint_coords[pose_id][15][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 5) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 7) && (pose_keypoint_scores[pose_id][7] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][9] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][7][1],pose_keypoint_coords[pose_id][7][0]), p2(pose_keypoint_coords[pose_id][9][1],pose_keypoint_coords[pose_id][9][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 7) && (pose_keypoint_scores[pose_id][7] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][7][1],pose_keypoint_coords[pose_id][7][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            
+            if((keypoint_id == 16) && (pose_keypoint_scores[pose_id][16] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][14] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][16][1],pose_keypoint_coords[pose_id][16][0]), p2(pose_keypoint_coords[pose_id][14][1],pose_keypoint_coords[pose_id][14][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 12) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][14] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]), p2(pose_keypoint_coords[pose_id][14][1],pose_keypoint_coords[pose_id][14][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 12) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]), p2(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 8) && (pose_keypoint_scores[pose_id][8] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][8][1],pose_keypoint_coords[pose_id][8][0]), p2(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+            if((keypoint_id == 8) && (pose_keypoint_scores[pose_id][8] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][10] >= MIN_POSE_SCORE))
+            {
+                cv::Point p1(pose_keypoint_coords[pose_id][8][1],pose_keypoint_coords[pose_id][8][0]), p2(pose_keypoint_coords[pose_id][10][1],pose_keypoint_coords[pose_id][10][0]);
+                cv::line(img, p1, p2, colorLine, thickness);
+            }
+        }
+    }
+
+    cv::imwrite(output_folder_file, img);
+*/
     return ret;
 }
 
