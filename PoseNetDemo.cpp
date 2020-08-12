@@ -55,8 +55,8 @@ using namespace std;
 #define NUM_CHAIN 16
 #define LOCAL_MAXIMUM_RADIUS 1
 #define MAX_POSE_DETECTIONS 10
-#define MIN_POSE_SCORE 0.25
-//#define MIN_POSE_SCORE 0.1
+//#define MIN_POSE_SCORE 0.25
+#define MIN_POSE_SCORE 0.15
 
 /*****************************************
 * Global Variables
@@ -232,14 +232,12 @@ void prepare_ONNX_Runtime() {
     printf("Start Loading Model %s\n", model_name.c_str());
 }
 
-
 int preprocess_input() {
     int ret=0;
     const char* mat_out = "mat_out.jpg";
     int in_wid, in_hei, in_channel;
     in_channel = 3;
     int img_sizex, img_sizey, img_channels;
-
     std::string part_names_file("part_names.txt");
     std::string chain_names_file("chain_names.txt");
     if(loadLabelFile(part_names_file,chain_names_file) != 0)
@@ -247,25 +245,41 @@ int preprocess_input() {
         fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
         return -1;
     }
-    // process image
-    cv::Mat _img = cv::imread(input_folder_file, cv::IMREAD_COLOR);  
-    cv::Mat img;
-    cv::Mat img_update;   
 
+
+    //cv::Mat xyz = cv::imread("./images/mat_out.jpg", cv::IMREAD_COLOR); //-> error
+    cv::Mat _img = cv::imread("./images/head3.jpg", cv::IMREAD_COLOR); //-> OK
+    //cv::Mat xyz = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+
+    //stbi_uc * img_data = stbi_load("images/mat_out.jpg", &img_sizex, &img_sizey, &img_channels, STBI_default);
+    stbi_uc * img_data = stbi_load(input_folder_file, &img_sizex, &img_sizey, &img_channels, STBI_default);
+    
+    tget_wid = 257;
+    tget_hei = 257;
+    
+/*
+    // process image
+    cv::Mat _img,img;
+    //read image from input_folder_file
+    _img = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+    // create a copy image to output_folder_file
+    cv::imwrite(output_folder_file, _img);
     valid_resolution(_img.cols, _img.rows, (int*) &tget_wid, (int*) &tget_hei); 
     //this model use fixed 257x257 image with stride = 32
-
     tget_wid = 257;
     tget_hei = 257;
     cv::resize(_img, img, cv::Size(tget_wid, tget_hei), 0, 0, CV_INTER_LINEAR);
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
-
     cv::imwrite(mat_out, img);
-
     stbi_uc * img_data = stbi_load(mat_out, &img_sizex, &img_sizey, &img_channels, STBI_default);
+*/
+
     const S_Pixel * imgPixels(reinterpret_cast<const S_Pixel *>(img_data));
 
-    size_t input_tensor_size = tget_wid * tget_hei * in_channel;
+    int input_tensor_size = tget_wid * tget_hei * in_channel;
+    printf("input_tensor_size: %d \n",input_tensor_size);
+
+    
     std::vector<float> input_tensor_values(input_tensor_size);
 
     if(model == MOBILENET)
@@ -276,6 +290,7 @@ int preprocess_input() {
                 for (int x = 0; x < img_sizex; x++, offs++){
                     const int val(imgPixels[y * img_sizex + x].RGBA[c]);
                     input_tensor_values[offs] = ((float)val)*2/255 - 1; // for mobilenet
+                    //printf("input_tensor_values[offs]: %f \n",input_tensor_values[offs]);
                 }
             }
         }
@@ -293,7 +308,9 @@ int preprocess_input() {
             }
         }
     }
-    
+
+    printf("img_sizex: %d \n",img_sizex);
+    printf("img_sizey: %d \n",img_sizey);
     // create input tensor object from data values
     OrtMemoryInfo* memory_info;
     CheckStatus(g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info));
@@ -382,6 +399,13 @@ int preprocess_input() {
     CheckStatus(g_ort->IsTensor(input_tensor[0],&is_tensor));
     assert(is_tensor);
     g_ort->ReleaseMemoryInfo(memory_info);
+
+    /*
+    for(int x=0;x<30;x++)
+    {
+        printf("input_tensor[x]: %f \n",input_tensor[0][x]);
+    }*/
+    
     return ret;
 }
 
@@ -469,12 +493,22 @@ int postprocess()
     cv::Scalar colorCircle(255,255,255);
     cv::Scalar colorLine(255, 255, 0);
 
-    cv::Mat img = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+/*
+    cv::Mat img = cv::imread(output_folder_file, cv::IMREAD_COLOR);
     
-    cv::Mat img_out;
     tget_wid = 257;
     tget_hei = 257;
     float scale = float(int(float(img.cols) / float(tget_wid) + 0.5));
+*/
+
+    FILE *fp_heatmap;
+    FILE *fp_offset;
+    FILE *fp_fwd;
+    FILE *fp_bwd;
+    fp_heatmap = fopen("output/heatmap_result.txt", "w");
+    fp_offset = fopen("output/offsets_result.txt", "w");
+    fp_fwd = fopen("output/displacement_fwd_result.txt", "w");
+    fp_bwd = fopen("output/displacement_bwd_result.txt", "w");
 
     //float max=0;
     for (int c = 0; c < NUM_KEYPOINTS; c++)
@@ -484,6 +518,8 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_heatmap[a][b][c] = sigmoid(out_data[0][out_data_index]);
+                //fprintf(fp_heatmap, "%f\n", out_data[0][out_data_index]);
+                fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]);
                 //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
                 //if(max<arr_heatmap[a][b][c]) max = arr_heatmap[a][b][c];
             }
@@ -499,6 +535,7 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_offset[a][b][c] = out_data[1][out_data_index];
+                fprintf(fp_offset, "%f\n", out_data[1][out_data_index]);
                 //printf("Value of n=%f \n", arr_offset[a][b][c]);
             }
         }
@@ -511,6 +548,7 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_fwd[a][b][c] = out_data[2][out_data_index];
+                fprintf(fp_fwd, "%f\n", out_data[2][out_data_index]);
                 //printf("Value of n=%f \n", arr_fwd[a][b][c]);
             }
         }
@@ -523,11 +561,17 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_bwd[a][b][c] = out_data[3][out_data_index];
+                fprintf(fp_bwd, "%f\n", out_data[3][out_data_index]);
                 //printf("Value of n=%f \n", arr_bwd[a][b][c]);
             }
         }
     }
 
+
+    fclose(fp_heatmap);
+    fclose(fp_offset);
+    fclose(fp_fwd);
+    fclose(fp_bwd);
 
     for (int  c = 0; c < NUM_KEYPOINTS; c++)
     {
@@ -841,8 +885,11 @@ int postprocess()
             //####################(  Draw keypoints  )#########################
             if(pose_keypoint_scores[pose_id][keypoint_id] >= MIN_POSE_SCORE)
             {
-                cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][1],pose_keypoint_coords[pose_id][keypoint_id][0]);
+                cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][0]*scale,pose_keypoint_coords[pose_id][keypoint_id][1]*scale);
                 cv::circle(img, centerCircle, radiusCircle, colorCircle, thickness);
+                printf(" Keypoint = %s \n",  label_file_map[keypoint_id].c_str());
+                printf("coord = [%f %f]\n",  pose_keypoint_coords[pose_id][keypoint_id][0]*scale, pose_keypoint_coords[pose_id][keypoint_id][1]*scale);
+                printf("centerCircle = [%f %f]\n",  centerCircle.x, centerCircle.y);
             }
         }
         for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
@@ -850,70 +897,71 @@ int postprocess()
             //####################(  Draw skeleton  )#########################
             if((keypoint_id == 15) && (pose_keypoint_scores[pose_id][15] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][15][1],pose_keypoint_coords[pose_id][15][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][15][1]*scale,pose_keypoint_coords[pose_id][15][0]*scale), p2(pose_keypoint_coords[pose_id][13][1]*scale,pose_keypoint_coords[pose_id][13][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][13] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][13][1],pose_keypoint_coords[pose_id][13][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1]*scale,pose_keypoint_coords[pose_id][11][0]*scale), p2(pose_keypoint_coords[pose_id][13][1]*scale,pose_keypoint_coords[pose_id][13][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1]*scale,pose_keypoint_coords[pose_id][11][0]*scale), p2(pose_keypoint_coords[pose_id][12][1]*scale,pose_keypoint_coords[pose_id][12][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 11) && (pose_keypoint_scores[pose_id][11] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][11][1],pose_keypoint_coords[pose_id][11][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][11][1]*scale,pose_keypoint_coords[pose_id][11][0]*scale), p2(pose_keypoint_coords[pose_id][5][1]*scale,pose_keypoint_coords[pose_id][5][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 5) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][6][1]*scale,pose_keypoint_coords[pose_id][6][0]*scale), p2(pose_keypoint_coords[pose_id][5][1]*scale,pose_keypoint_coords[pose_id][5][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 7) && (pose_keypoint_scores[pose_id][7] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][9] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][7][1],pose_keypoint_coords[pose_id][7][0]), p2(pose_keypoint_coords[pose_id][9][1],pose_keypoint_coords[pose_id][9][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][7][1]*scale,pose_keypoint_coords[pose_id][7][0]*scale), p2(pose_keypoint_coords[pose_id][9][1]*scale,pose_keypoint_coords[pose_id][9][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 7) && (pose_keypoint_scores[pose_id][7] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][5] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][7][1],pose_keypoint_coords[pose_id][7][0]), p2(pose_keypoint_coords[pose_id][5][1],pose_keypoint_coords[pose_id][5][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][7][1]*scale,pose_keypoint_coords[pose_id][7][0]*scale), p2(pose_keypoint_coords[pose_id][5][1]*scale,pose_keypoint_coords[pose_id][5][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             
             if((keypoint_id == 16) && (pose_keypoint_scores[pose_id][16] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][14] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][16][1],pose_keypoint_coords[pose_id][16][0]), p2(pose_keypoint_coords[pose_id][14][1],pose_keypoint_coords[pose_id][14][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][16][1]*scale,pose_keypoint_coords[pose_id][16][0]*scale), p2(pose_keypoint_coords[pose_id][14][1]*scale,pose_keypoint_coords[pose_id][14][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 12) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][14] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]), p2(pose_keypoint_coords[pose_id][14][1],pose_keypoint_coords[pose_id][14][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][12][1]*scale,pose_keypoint_coords[pose_id][12][0]*scale), p2(pose_keypoint_coords[pose_id][14][1]*scale,pose_keypoint_coords[pose_id][14][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 12) && (pose_keypoint_scores[pose_id][12] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][12][1],pose_keypoint_coords[pose_id][12][0]), p2(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][12][1]*scale,pose_keypoint_coords[pose_id][12][0]*scale), p2(pose_keypoint_coords[pose_id][6][1]*scale,pose_keypoint_coords[pose_id][6][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 8) && (pose_keypoint_scores[pose_id][8] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][6] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][8][1],pose_keypoint_coords[pose_id][8][0]), p2(pose_keypoint_coords[pose_id][6][1],pose_keypoint_coords[pose_id][6][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][8][1]*scale,pose_keypoint_coords[pose_id][8][0]*scale), p2(pose_keypoint_coords[pose_id][6][1]*scale,pose_keypoint_coords[pose_id][6][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
             if((keypoint_id == 8) && (pose_keypoint_scores[pose_id][8] >= MIN_POSE_SCORE) && (pose_keypoint_scores[pose_id][10] >= MIN_POSE_SCORE))
             {
-                cv::Point p1(pose_keypoint_coords[pose_id][8][1],pose_keypoint_coords[pose_id][8][0]), p2(pose_keypoint_coords[pose_id][10][1],pose_keypoint_coords[pose_id][10][0]);
+                cv::Point p1(pose_keypoint_coords[pose_id][8][1]*scale,pose_keypoint_coords[pose_id][8][0]*scale), p2(pose_keypoint_coords[pose_id][10][1]*scale,pose_keypoint_coords[pose_id][10][0]*scale);
                 cv::line(img, p1, p2, colorLine, thickness);
             }
         }
     }
-
-    cv::imwrite(output_folder_file, img);
 */
+
+    //cv::imwrite(output_folder_file, img);
+
     return ret;
 }
 
@@ -939,6 +987,11 @@ void run_model(){
         
         // Get pointer to output tensor float values
         g_ort->GetTensorMutableData(output_tensor[i], (void**)&out_data[i]);        
+    }
+    
+    for(int x=0;x<30;x++)
+    {
+        printf("out_data[x]: %f \n",out_data[0][x]);
     }
 }
 
