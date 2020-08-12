@@ -481,6 +481,8 @@ int postprocess()
     tget_hei = 257;
     float scale = float(int(float(img.cols) / float(tget_wid) + 0.5));
 
+    /*
+    // save output data to txt file
     FILE *fp_heatmap;
     FILE *fp_offset;
     FILE *fp_fwd;
@@ -489,8 +491,8 @@ int postprocess()
     fp_offset = fopen("output/offsets_result.txt", "w");
     fp_fwd = fopen("output/displacement_fwd_result.txt", "w");
     fp_bwd = fopen("output/displacement_bwd_result.txt", "w");
+    */
 
-    //float max=0;
     for (int c = 0; c < NUM_KEYPOINTS; c++)
     {
         for (int b = 0; b < arr_size; b++)
@@ -499,13 +501,11 @@ int postprocess()
             {
                 arr_heatmap[a][b][c] = sigmoid(out_data[0][out_data_index]);
                 //fprintf(fp_heatmap, "%f\n", out_data[0][out_data_index]);
-                fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]);
+                //fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]); // save output data to txt file
                 //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
-                //if(max<arr_heatmap[a][b][c]) max = arr_heatmap[a][b][c];
             }
         }
     }
-    //printf("max score=%f \n", max);
 
     out_data_index=0;
     for (int c = 0; c < NUM_KEYPOINTS*2; c++)
@@ -515,7 +515,7 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_offset[a][b][c] = out_data[1][out_data_index];
-                fprintf(fp_offset, "%f\n", out_data[1][out_data_index]);
+                //fprintf(fp_offset, "%f\n", out_data[1][out_data_index]); // save output data to txt file
                 //printf("Value of n=%f \n", arr_offset[a][b][c]);
             }
         }
@@ -528,7 +528,7 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_fwd[a][b][c] = out_data[2][out_data_index];
-                fprintf(fp_fwd, "%f\n", out_data[2][out_data_index]);
+                //fprintf(fp_fwd, "%f\n", out_data[2][out_data_index]); // save output data to txt file
                 //printf("Value of n=%f \n", arr_fwd[a][b][c]);
             }
         }
@@ -541,17 +541,19 @@ int postprocess()
             for (int a = 0; a < arr_size; a++,out_data_index++)
             {
                 arr_bwd[a][b][c] = out_data[3][out_data_index];
-                fprintf(fp_bwd, "%f\n", out_data[3][out_data_index]);
+                //fprintf(fp_bwd, "%f\n", out_data[3][out_data_index]); // save output data to txt file
                 //printf("Value of n=%f \n", arr_bwd[a][b][c]);
             }
         }
     }
 
-
+    /*
+    // save output data to txt file
     fclose(fp_heatmap);
     fclose(fp_offset);
     fclose(fp_fwd);
     fclose(fp_bwd);
+    */
 
     for (int  c = 0; c < NUM_KEYPOINTS; c++)
     {
@@ -707,6 +709,7 @@ int postprocess()
                 if(strcmp(dest_part,label_file_map[part_id].c_str()) == 0) target_keypoint_id = part_id;
             }
             
+            //need to set source_keypoint_id, target_keypoint_id when edge = 15 because the error https://stackoverflow.com/questions/4198675/string-is-not-printing-without-new-line-character-in-c
             if(edge == 15)
             {
                 source_keypoint_id = 16;
@@ -754,6 +757,7 @@ int postprocess()
                 if(strcmp(dest_part,label_file_map[part_id].c_str()) == 0) target_keypoint_id = part_id;
             }
             
+            //need to set source_keypoint_id, target_keypoint_id when edge = 15 because the error https://stackoverflow.com/questions/4198675/string-is-not-printing-without-new-line-character-in-c
             if(edge == 15)
             {
                 source_keypoint_id = 14;
