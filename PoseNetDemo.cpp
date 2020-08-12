@@ -245,19 +245,7 @@ int preprocess_input() {
         fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
         return -1;
     }
-
-
-    //cv::Mat xyz = cv::imread("./images/mat_out.jpg", cv::IMREAD_COLOR); //-> error
-    cv::Mat _img = cv::imread("./images/head3.jpg", cv::IMREAD_COLOR); //-> OK
-    //cv::Mat xyz = cv::imread(input_folder_file, cv::IMREAD_COLOR);
-
-    //stbi_uc * img_data = stbi_load("images/mat_out.jpg", &img_sizex, &img_sizey, &img_channels, STBI_default);
-    stbi_uc * img_data = stbi_load(input_folder_file, &img_sizex, &img_sizey, &img_channels, STBI_default);
     
-    tget_wid = 257;
-    tget_hei = 257;
-    
-/*
     // process image
     cv::Mat _img,img;
     //read image from input_folder_file
@@ -272,12 +260,10 @@ int preprocess_input() {
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
     cv::imwrite(mat_out, img);
     stbi_uc * img_data = stbi_load(mat_out, &img_sizex, &img_sizey, &img_channels, STBI_default);
-*/
 
     const S_Pixel * imgPixels(reinterpret_cast<const S_Pixel *>(img_data));
 
     int input_tensor_size = tget_wid * tget_hei * in_channel;
-    printf("input_tensor_size: %d \n",input_tensor_size);
 
     
     std::vector<float> input_tensor_values(input_tensor_size);
@@ -309,8 +295,6 @@ int preprocess_input() {
         }
     }
 
-    printf("img_sizex: %d \n",img_sizex);
-    printf("img_sizey: %d \n",img_sizey);
     // create input tensor object from data values
     OrtMemoryInfo* memory_info;
     CheckStatus(g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info));
@@ -472,10 +456,8 @@ int postprocess()
     float pose_keypoint_coords[MAX_POSE_DETECTIONS][NUM_KEYPOINTS][2];
     int squared_nms_radius;
     int nms_radius = 20;
-    //int num_parts = label_file_map.size();;
-    //int num_edges = label_chain_map.size()/2;
-    int num_parts = 17;
-    int num_edges = 16;
+    int num_parts = label_file_map.size();;
+    int num_edges = label_chain_map.size()/2;
     int target_keypoint_id, source_keypoint_id;
     float source_keypoint_indices[2];
     float displaced_point[2];
@@ -493,13 +475,11 @@ int postprocess()
     cv::Scalar colorCircle(255,255,255);
     cv::Scalar colorLine(255, 255, 0);
 
-/*
     cv::Mat img = cv::imread(output_folder_file, cv::IMREAD_COLOR);
     
     tget_wid = 257;
     tget_hei = 257;
     float scale = float(int(float(img.cols) / float(tget_wid) + 0.5));
-*/
 
     FILE *fp_heatmap;
     FILE *fp_offset;
@@ -873,11 +853,10 @@ int postprocess()
         for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
         {
             printf(" Keypoint = %s \n",  label_file_map[keypoint_id].c_str());
-            printf("score = %f, coord = [%f %f]\n",  pose_keypoint_scores[pose_id][keypoint_id], pose_keypoint_coords[pose_id][keypoint_id][0], pose_keypoint_coords[pose_id][keypoint_id][1]);
+            printf("score = %f, coord = [%f %f]\n",  pose_keypoint_scores[pose_id][keypoint_id], pose_keypoint_coords[pose_id][keypoint_id][0]*scale, pose_keypoint_coords[pose_id][keypoint_id][1]*scale);
         }
     }
 
-/*
     for(int pose_id=0; pose_id < pose_count; pose_id++)
     {
         for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
@@ -885,11 +864,8 @@ int postprocess()
             //####################(  Draw keypoints  )#########################
             if(pose_keypoint_scores[pose_id][keypoint_id] >= MIN_POSE_SCORE)
             {
-                cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][0]*scale,pose_keypoint_coords[pose_id][keypoint_id][1]*scale);
+                cv::Point centerCircle(pose_keypoint_coords[pose_id][keypoint_id][1]*scale,pose_keypoint_coords[pose_id][keypoint_id][0]*scale);
                 cv::circle(img, centerCircle, radiusCircle, colorCircle, thickness);
-                printf(" Keypoint = %s \n",  label_file_map[keypoint_id].c_str());
-                printf("coord = [%f %f]\n",  pose_keypoint_coords[pose_id][keypoint_id][0]*scale, pose_keypoint_coords[pose_id][keypoint_id][1]*scale);
-                printf("centerCircle = [%f %f]\n",  centerCircle.x, centerCircle.y);
             }
         }
         for(int keypoint_id = 0; keypoint_id < NUM_KEYPOINTS; keypoint_id++)
@@ -958,9 +934,9 @@ int postprocess()
             }
         }
     }
-*/
 
-    //cv::imwrite(output_folder_file, img);
+
+    cv::imwrite(output_folder_file, img);
 
     return ret;
 }
@@ -987,11 +963,6 @@ void run_model(){
         
         // Get pointer to output tensor float values
         g_ort->GetTensorMutableData(output_tensor[i], (void**)&out_data[i]);        
-    }
-    
-    for(int x=0;x<30;x++)
-    {
-        printf("out_data[x]: %f \n",out_data[0][x]);
     }
 }
 
