@@ -264,7 +264,6 @@ int preprocess_input() {
     const S_Pixel * imgPixels(reinterpret_cast<const S_Pixel *>(img_data));
 
     int input_tensor_size = tget_wid * tget_hei * in_channel;
-
     
     std::vector<float> input_tensor_values(input_tensor_size);
 
@@ -348,7 +347,6 @@ int preprocess_input() {
             printf("incorrect input tensor dim count is %zu", i);
         }
         
-
         g_ort->ReleaseTypeInfo(typeinfo);
     }    
     
@@ -697,7 +695,6 @@ int postprocess()
         instance_keypoint_coords[root_id][0] = root_image_coords[0];
         instance_keypoint_coords[root_id][1] = root_image_coords[1];
 
-
         for(int edge = num_edges-1; edge >= 0; edge--)
         {
             strcpy(source_part,label_chain_map[edge+NUM_CHAIN].c_str());
@@ -748,7 +745,6 @@ int postprocess()
 
         for(int edge = 0; edge < num_edges; edge++)
         {
-
             strcpy(source_part,label_chain_map[edge].c_str());
             strcpy(dest_part,label_chain_map[edge+NUM_CHAIN].c_str());
             for(int part_id=0; part_id < NUM_KEYPOINTS; part_id++)
@@ -774,7 +770,7 @@ int postprocess()
                 else if(source_keypoint_indices[1] > (arr_size - 1)) source_keypoint_indices[1] = arr_size - 1;
                 //printf("source_keypoint_indices: [%f %f] \n",  source_keypoint_indices[0],source_keypoint_indices[1]);
                 displaced_point[0] = instance_keypoint_coords[source_keypoint_id][0] + arr_fwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge];
-                displaced_point[1] = instance_keypoint_coords[source_keypoint_id][1] + arr_fwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge+16];
+                displaced_point[1] = instance_keypoint_coords[source_keypoint_id][1] + arr_fwd[int(source_keypoint_indices[0])][int(source_keypoint_indices[1])][edge+NUM_CHAIN];
 
                 displaced_point_indices[0] = float(int(displaced_point[0] / float(stride) + 0.5));
                 displaced_point_indices[1] = float(int(displaced_point[1] / float(stride) + 0.5));
@@ -785,7 +781,7 @@ int postprocess()
                 //printf("displaced_point_indices: [%f %f] \n",  displaced_point_indices[0],displaced_point_indices[1]);
                 score = arr_heatmap[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id];
                 image_coord[0] = displaced_point_indices[0] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id]; 
-                image_coord[1] = displaced_point_indices[1] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id + 17];
+                image_coord[1] = displaced_point_indices[1] * float(stride) + arr_offset[int(displaced_point_indices[0])][int(displaced_point_indices[1])][target_keypoint_id + NUM_KEYPOINTS];
                 //printf("score: %f\n",  score);
                 //printf("image_coord: [%f %f] \n",  image_coord[0],image_coord[1]);
                 instance_keypoint_scores[target_keypoint_id] = score;
@@ -938,7 +934,6 @@ int postprocess()
             }
         }
     }
-
 
     cv::imwrite(output_folder_file, img);
 
