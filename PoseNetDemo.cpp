@@ -41,7 +41,6 @@ Note restriction:
 //#include <CommandAllocatorRing.h>
 
 #include "define.h"
-#include "image.h"
 
 using namespace cv; 
 using namespace std;
@@ -55,26 +54,33 @@ using namespace std;
 #define NUM_CHAIN 16
 #define LOCAL_MAXIMUM_RADIUS 1
 #define MAX_POSE_DETECTIONS 10
-//#define MIN_POSE_SCORE 0.25
-#define MIN_POSE_SCORE 0.15
+#define MIN_POSE_SCORE 0.25
+//#define MIN_POSE_SCORE 0.15
 
 /*****************************************
 * Global Variables
 ******************************************/
 int model=RESNET50;
 std::string model_name = RESNET_str;
+std::string stride_name;
+std::string model_file;
 char* output_folder_file;
 char* input_file;
 char* input_folder_file;
-int stride = 32;
-int quant_bytes = 4;
 float score_threshold = 0.5;
 std::map<int,std::string> label_file_map;
 std::map<int,std::string> label_chain_map;
 
-int tget_wid = 257;
-int tget_hei = 257;
-
+int tget_wid;
+int tget_hei;
+int image_size_x;
+int image_size_y;
+int stride = 16; // default stride is 16
+int arr_size;
+int headmap_id,offset_id,bwd_id,fwd_id;
+const char* mat_out = "mat_out.jpg";
+std::string part_names_file("part_names.txt");
+std::string chain_names_file("chain_names.txt");
 // ONNX Runtime variables
 OrtEnv* env;
 OrtSession* session;
@@ -145,9 +151,9 @@ int parse_argument(int argc, char* argv[])
 			input_folder_file = argv[index+1];
 		} else if (!strcmp("-ofile", argv[index])) {
 			output_folder_file = argv[index+1];
-		} else if (!strcmp("-quant_bytes", argv[index])) {
-			quant_bytes = atoi(argv[index+1]);
-		}
+		} else if (!strcmp("-model_file", argv[index])) {
+			model_file = argv[index+1];
+        }
         else {
         }
     }
@@ -164,11 +170,10 @@ int parse_argument(int argc, char* argv[])
         ret = -1;
     }
 
-    // below process is related to restriction
-    if (model == MOBILENET) {
-        stride = 16;
-        quant_bytes = 4;
-    }
+    if(stride == 16) stride_name = "_stride16";
+    else if(stride == 8) stride_name = "_stride8";
+    else if(stride == 32) stride_name = "_stride32";
+
     return ret;
 }
 
@@ -224,22 +229,19 @@ void prepare_ONNX_Runtime() {
 
     //Config : model
     //std::string onnx_model_name = model_name + "-PoseNet.onnx";
-    std::string onnx_model_name = model_name + "-PoseNet.onnx";
-    std::string onnx_model_path= "./models/" + onnx_model_name;
+    std::string onnx_model_name = model_name + stride_name + ".onnx";
+    std::string onnx_model_path = "./models/" + onnx_model_name;
+    //std::string onnx_model_path = model_file;
 
     //ONNX runtime load model
-    CheckStatus(g_ort->CreateSession(env, onnx_model_path.c_str(), session_options, &session));    
+    CheckStatus(g_ort->CreateSession(env, onnx_model_path.c_str(), session_options, &session));
     printf("Start Loading Model %s\n", model_name.c_str());
 }
 
 int preprocess_input() {
     int ret=0;
-    const char* mat_out = "mat_out.jpg";
-    int in_wid, in_hei, in_channel;
-    in_channel = 3;
     int img_sizex, img_sizey, img_channels;
-    std::string part_names_file("part_names.txt");
-    std::string chain_names_file("chain_names.txt");
+    
     if(loadLabelFile(part_names_file,chain_names_file) != 0)
     {
         fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
@@ -254,28 +256,50 @@ int preprocess_input() {
     cv::imwrite(output_folder_file, _img);
     valid_resolution(_img.cols, _img.rows, (int*) &tget_wid, (int*) &tget_hei); 
     //this model use fixed 257x257 image with stride = 32
-    tget_wid = 257;
-    tget_hei = 257;
+    //tget_wid = 257;
+    //tget_hei = 257;
     cv::resize(_img, img, cv::Size(tget_wid, tget_hei), 0, 0, CV_INTER_LINEAR);
-    cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
+    //cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
     cv::imwrite(mat_out, img);
     stbi_uc * img_data = stbi_load(mat_out, &img_sizex, &img_sizey, &img_channels, STBI_default);
 
     const S_Pixel * imgPixels(reinterpret_cast<const S_Pixel *>(img_data));
 
-    int input_tensor_size = tget_wid * tget_hei * in_channel;
+    int input_tensor_size = img_sizex * img_sizey * img_channels;
     
     std::vector<float> input_tensor_values(input_tensor_size);
 
+    arr_size = ((tget_wid - 1) / stride) + 1;
+    printf("tget_wid: %d \n",tget_wid);
+    printf("stride: %d \n",stride);
+    printf("arr_size: %d \n",arr_size);
+
+/*
+    //for write image
+    FILE *fp_image;
+    fp_image = fopen("output/image.txt", "w");
+    //for read image
+    FILE *fp_image_read;
+    fp_image_read = fopen("output_data/image.txt", "r");
+    int x=0;
+    float num;
+    while (fscanf(fp_image_read, "%f", &num)!=EOF)
+    {
+        input_tensor_values[x] = num;
+        x++;
+    }
+*/
     if(model == MOBILENET)
     {
         int offs = 0;
-        for (int c = 0; c < 3; c++){
+        for (int c = 0; c < img_channels; c++){
             for (int y = 0; y < img_sizey; y++){
                 for (int x = 0; x < img_sizex; x++, offs++){
                     const int val(imgPixels[y * img_sizex + x].RGBA[c]);
                     input_tensor_values[offs] = ((float)val)*2/255 - 1; // for mobilenet
                     //printf("input_tensor_values[offs]: %f \n",input_tensor_values[offs]);
+                    //fprintf(fp_image, "%f\n", ((float)val)*2/255 - 1); // save output data to txt file
+                    //fprintf(fp_image, "%f\n", input_tensor_values[offs]); // save output data to txt file
                 }
             }
         }
@@ -284,7 +308,7 @@ int preprocess_input() {
     {
         float image_net_mean[3] = {-123.15, -115.90, -103.06 };
         int offs = 0;
-        for (int c = 0; c < 3; c++){
+        for (int c = 0; c < img_channels; c++){
             for (int y = 0; y < img_sizey; y++){
                 for (int x = 0; x < img_sizex; x++, offs++){
                     const int val(imgPixels[y * img_sizex + x].RGBA[c]);
@@ -293,6 +317,9 @@ int preprocess_input() {
             }
         }
     }
+
+    //fclose(fp_image_read);
+    //fclose(fp_image);
 
     // create input tensor object from data values
     OrtMemoryInfo* memory_info;
@@ -332,16 +359,14 @@ int preprocess_input() {
             input_node_dims_input.resize(num_dims);
             g_ort->GetDimensions(tensor_info, (int64_t*)input_node_dims_input.data(), num_dims);
             //check input dim
-            for (size_t j = 0; j < num_dims; j++) printf("Input %zu : dim %zu=%jd\n", i, j, input_node_dims_input[j]);
             
             //this is fixed model, so skip the update input value step
             //input_node_dims_input[0]=1;
-            //input_node_dims_input[1]= tget_wid;
-            //input_node_dims_input[2]= tget_hei;
-            //input_node_dims_input[3]= in_channel;
-
+            if(input_node_dims_input[1] == -1) input_node_dims_input[1]= tget_wid;
+            if(input_node_dims_input[2] == -1) input_node_dims_input[2]= tget_hei;
+            //input_node_dims_input[3]= img_channels;
             //check input dim
-            for (size_t j = 0; j < num_dims; j++) printf("After set value: Input %zu : dim %zu=%jd\n", i, j, input_node_dims_input[j]);
+            for (size_t j = 0; j < num_dims; j++) printf("Input %zu : dim %zu=%jd\n", i, j, input_node_dims_input[j]);
         }
         else  {
             printf("incorrect input tensor dim count is %zu", i);
@@ -355,7 +380,11 @@ int preprocess_input() {
         char* output_name;
         CheckStatus(g_ort->GetAllocatorWithDefaultOptions(&allocator));
         CheckStatus(g_ort->SessionGetOutputName(session, i, allocator, &output_name));
-        printf("output %d : name=%s\n", i, output_name);
+        printf("output %zu : name=%s\n", i, output_name);
+        if(strstr(output_name, "heatmap") != NULL) headmap_id = i;
+        else if(strstr(output_name, "offset") != NULL) offset_id = i;
+        else if(strstr(output_name, "bwd") != NULL) bwd_id = i;
+        else if(strstr(output_name, "fwd") != NULL) fwd_id = i;
         output_node_names[i] = output_name;
         // print input node types
         OrtTypeInfo* typeinfo;
@@ -365,13 +394,16 @@ int preprocess_input() {
         ONNXTensorElementDataType type;
         CheckStatus(g_ort->GetTensorElementType(tensor_info,&type));
         // print input shapes/dims
-        printf("Output : output_name=%s\n",  output_node_names[i]);
         size_t num_dims = 4;
-        printf("Output %d : type=%d\n", i, type);
-        printf("Output %d : num_dims=%zu\n", i, num_dims);
+        printf("Output %zu : type=%d\n", i, type);
+        printf("Output %zu : num_dims=%zu\n", i, num_dims);
         output_node_dims.resize(num_dims);
         g_ort->GetDimensions(tensor_info, (int64_t*)output_node_dims.data(), num_dims);
-        for (size_t j = 0; j < num_dims; j++) printf("output %zu : dim %zu=%jd\n", i, j, output_node_dims[j]);
+        for (size_t j = 0; j < num_dims; j++) 
+        {
+            if(output_node_dims[j] == -1) output_node_dims[j] = arr_size;
+            printf("output %zu : dim %zu=%jd\n", i, j, output_node_dims[j]);
+        }
         g_ort->ReleaseTypeInfo(typeinfo);
     }
 
@@ -382,23 +414,12 @@ int preprocess_input() {
     assert(is_tensor);
     g_ort->ReleaseMemoryInfo(memory_info);
 
-    /*
-    for(int x=0;x<30;x++)
-    {
-        printf("input_tensor[x]: %f \n",input_tensor[0][x]);
-    }*/
-    
     return ret;
 }
 
 int postprocess() 
 {
     int ret = 0;
-    int image_size = 257;
-    int stride = 32;
-    int arr_size = ((image_size - 1) / stride) + 1;
-    // check output tensor
-    
     /*
     float max_score=0;
     for(int i=0; i< arr_size*arr_size*NUM_KEYPOINTS; i++)
@@ -428,9 +449,13 @@ int postprocess()
 */
     int lmd = 2 * LOCAL_MAXIMUM_RADIUS + 1;
     float arr_heatmap[arr_size][arr_size][NUM_KEYPOINTS];
+    float arr_heatmap_temp[NUM_KEYPOINTS][arr_size][arr_size];
     float arr_offset[arr_size][arr_size][NUM_KEYPOINTS*2];
+    float arr_offset_temp[NUM_KEYPOINTS*2][arr_size][arr_size];
     float arr_fwd[arr_size][arr_size][NUM_CHAIN*2];
+    float arr_fwd_temp[NUM_CHAIN*2][arr_size][arr_size];
     float arr_bwd[arr_size][arr_size][NUM_CHAIN*2];
+    float arr_bwd_temp[NUM_CHAIN*2][arr_size][arr_size];
     float kp_scores[arr_size][arr_size];
     float max_vals[arr_size][arr_size];
     int max_loc[arr_size][arr_size];
@@ -475,11 +500,11 @@ int postprocess()
 
     cv::Mat img = cv::imread(output_folder_file, cv::IMREAD_COLOR);
     
-    tget_wid = 257;
-    tget_hei = 257;
+    //tget_wid = 257;
+    //tget_hei = 257;
     float scale = float(int(float(img.cols) / float(tget_wid) + 0.5));
-
-    /*
+    printf("Value of scale=%f \n", scale);
+    
     // save output data to txt file
     FILE *fp_heatmap;
     FILE *fp_offset;
@@ -489,69 +514,124 @@ int postprocess()
     fp_offset = fopen("output/offsets_result.txt", "w");
     fp_fwd = fopen("output/displacement_fwd_result.txt", "w");
     fp_bwd = fopen("output/displacement_bwd_result.txt", "w");
-    */
+    
 
-    for (int c = 0; c < NUM_KEYPOINTS; c++)
+    for (int a = 0; a < NUM_KEYPOINTS; a++)
     {
         for (int b = 0; b < arr_size; b++)
         {
-            for (int a = 0; a < arr_size; a++,out_data_index++)
+            for (int c = 0; c < arr_size; c++,out_data_index++)
             {
-                arr_heatmap[a][b][c] = sigmoid(out_data[0][out_data_index]);
-                //fprintf(fp_heatmap, "%f\n", out_data[0][out_data_index]);
+                arr_heatmap_temp[a][b][c] = sigmoid(out_data[headmap_id][out_data_index]);
+                //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]);
+                //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]); // save output data to txt file
                 //fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]); // save output data to txt file
                 //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
             }
         }
     }
-
-    out_data_index=0;
-    for (int c = 0; c < NUM_KEYPOINTS*2; c++)
+    //transpose
+    for (int a = 0; a < arr_size; a++)
     {
         for (int b = 0; b < arr_size; b++)
         {
-            for (int a = 0; a < arr_size; a++,out_data_index++)
+            for (int c = 0; c < NUM_KEYPOINTS; c++)
             {
-                arr_offset[a][b][c] = out_data[1][out_data_index];
-                //fprintf(fp_offset, "%f\n", out_data[1][out_data_index]); // save output data to txt file
+                arr_heatmap[a][b][c] =  arr_heatmap_temp[c][a][b];
+                //fprintf(fp_offset, "%f\n", arr_offset[a][b][c]); // save output data to txt file
                 //printf("Value of n=%f \n", arr_offset[a][b][c]);
             }
         }
     }
+
     out_data_index=0;
-    for (int c = 0; c < 32; c++)
+    for (int a = 0; a < NUM_KEYPOINTS*2; a++)
     {
         for (int b = 0; b < arr_size; b++)
         {
-            for (int a = 0; a < arr_size; a++,out_data_index++)
+            for (int c = 0; c < arr_size; c++,out_data_index++)
             {
-                arr_fwd[a][b][c] = out_data[2][out_data_index];
-                //fprintf(fp_fwd, "%f\n", out_data[2][out_data_index]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_fwd[a][b][c]);
+                //arr_offset[a][b][c] = out_data[offset_id][out_data_index];
+                arr_offset_temp[a][b][c] = out_data[offset_id][out_data_index];
+                //fprintf(fp_offset, "%f\n", out_data[offset_id][out_data_index]); // save output data to txt file
+                //printf("Value of n=%f \n", arr_offset[a][b][c]);
             }
         }
     }
-    out_data_index=0;
-    for (int c = 0; c < 32; c++)
+    //transpose
+    for (int a = 0; a < arr_size; a++)
     {
         for (int b = 0; b < arr_size; b++)
         {
-            for (int a = 0; a < arr_size; a++,out_data_index++)
+            for (int c = 0; c < NUM_KEYPOINTS*2; c++)
             {
-                arr_bwd[a][b][c] = out_data[3][out_data_index];
-                //fprintf(fp_bwd, "%f\n", out_data[3][out_data_index]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_bwd[a][b][c]);
+                arr_offset[a][b][c] =  arr_offset_temp[c][a][b];
+                fprintf(fp_offset, "%f\n", arr_offset[a][b][c]); // save output data to txt file
+                //printf("Value of n=%f \n", arr_offset[a][b][c]);
             }
         }
     }
 
-    /*
+    out_data_index=0;
+    for (int a = 0; a < NUM_CHAIN*2; a++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int c = 0; c < arr_size; c++,out_data_index++)
+            {
+                arr_fwd_temp[a][b][c] = out_data[fwd_id][out_data_index];
+                //fprintf(fp_fwd, "%f\n", out_data[fwd_id][out_data_index]); // save output data to txt file
+                //printf("Value of n=%f \n", arr_fwd[a][b][c]);
+            }
+        }
+    }
+    //transpose
+    for (int a = 0; a < arr_size; a++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int c = 0; c < NUM_CHAIN*2; c++)
+            {
+                arr_fwd[a][b][c] =  arr_fwd_temp[c][a][b];
+                fprintf(fp_fwd, "%f\n", arr_fwd[a][b][c]); // save output data to txt file
+                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+            }
+        }
+    }
+
+    out_data_index=0;
+    for (int a = 0; a < NUM_CHAIN*2; a++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int c = 0; c < arr_size; c++,out_data_index++)
+            {
+                arr_bwd_temp[a][b][c] = out_data[bwd_id][out_data_index];
+                //fprintf(fp_bwd, "%f\n", out_data[bwd_id][out_data_index]); // save output data to txt file
+                //printf("Value of n=%f \n", arr_bwd[a][b][c]);
+            }
+        }
+    }
+    //transpose
+    for (int a = 0; a < arr_size; a++)
+    {
+        for (int b = 0; b < arr_size; b++)
+        {
+            for (int c = 0; c < NUM_CHAIN*2; c++)
+            {
+                arr_bwd[a][b][c] =  arr_bwd_temp[c][a][b];
+                fprintf(fp_bwd, "%f\n", arr_bwd[a][b][c]); // save output data to txt file
+                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+            }
+        }
+    }
+
+    
     // save output data to txt file
     fclose(fp_heatmap);
     fclose(fp_offset);
     fclose(fp_fwd);
     fclose(fp_bwd);
-    */
 
     for (int  c = 0; c < NUM_KEYPOINTS; c++)
     {
