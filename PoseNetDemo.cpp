@@ -38,6 +38,8 @@ Note restriction:
 #include <math.h>
 #include <iomanip>
 #include <sstream>
+#include <sys/stat.h>
+#include <dirent.h>
 //#include <CommandAllocatorRing.h>
 
 #include "define.h"
@@ -64,9 +66,11 @@ int model=RESNET50;
 std::string model_name = RESNET_str;
 std::string stride_name;
 std::string model_file;
-char* output_folder_file;
-char* input_file;
-char* input_folder_file;
+char input_folder[] = "images";
+char output_folder[] = "output";
+char input_file[100];
+char input_folder_file[100];
+char output_folder_file[100];
 float score_threshold = 0.5;
 std::map<int,std::string> label_file_map;
 std::map<int,std::string> label_chain_map;
@@ -147,17 +151,21 @@ int parse_argument(int argc, char* argv[])
 			model_name = argv[index+1];
 		} else if (!strcmp("-stride", argv[index])) {
 			stride = atoi(argv[index+1]);
-		} else if (!strcmp("-ifile", argv[index])) {
-			input_folder_file = argv[index+1];
-		} else if (!strcmp("-ofile", argv[index])) {
-			output_folder_file = argv[index+1];
-		} else if (!strcmp("-model_file", argv[index])) {
+		}  else if (!strcmp("-model_file", argv[index])) {
 			model_file = argv[index+1];
-        }
+        }else if (!strcmp("-ifile", argv[index])) {
+            strcpy(input_file,argv[index+1]);
+		}
         else {
         }
     }
 
+    return ret;
+}
+
+int prepare_environment()
+{
+    int ret = 0;
     // process some input argument
     if (!strcmp(model_name.c_str(), RESNET_str)) {
         model = RESNET50;
@@ -174,9 +182,19 @@ int parse_argument(int argc, char* argv[])
     else if(stride == 8) stride_name = "_stride8";
     else if(stride == 32) stride_name = "_stride32";
 
-    return ret;
-}
+    DIR* dir = opendir("output");
+    if (!dir) ret =mkdir("output", 0777);
 
+    strcpy(input_folder_file,input_folder);
+    strcat(input_folder_file,"/");
+    strcat(input_folder_file,input_file);
+    strcpy(output_folder_file,output_folder);
+    strcat(output_folder_file,"/");
+    strcat(output_folder_file,input_file);
+
+    return ret;
+
+}
 /*****************************************
 * Function Name :  loadLabelFile
 * Description       : Load txt file
@@ -284,9 +302,6 @@ int preprocess_input() {
     std::vector<float> input_tensor_values(input_tensor_size);
 
     arr_size = ((tget_wid - 1) / stride) + 1;
-    printf("tget_wid: %d \n",tget_wid);
-    printf("stride: %d \n",stride);
-    printf("arr_size: %d \n",arr_size);
 
 /*
     //for write image
@@ -515,9 +530,6 @@ int postprocess()
     cv::Mat img = cv::imread(output_folder_file, cv::IMREAD_COLOR);
     
     float scale = float(img.cols) / float(tget_wid);
-    printf("Value of tget_wid=%f \n", float(tget_wid));
-    printf("Value of img.cols=%f \n", float(img.cols));
-    printf("Value of scale=%f \n", scale);
     
     // save output data to txt file
     FILE *fp_heatmap;
@@ -1076,6 +1088,8 @@ int main(int argc, char* argv[])
     if(ret = parse_argument(argc, argv)) {
         return ret;
     }
+
+    prepare_environment();
 
     // setup ONNX runtime env
     prepare_ONNX_Runtime();
