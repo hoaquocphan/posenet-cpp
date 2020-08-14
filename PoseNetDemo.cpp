@@ -241,23 +241,37 @@ void prepare_ONNX_Runtime() {
 int preprocess_input() {
     int ret=0;
     int img_sizex, img_sizey, img_channels;
-    
+    // currently, we support fix size image only
+    tget_wid = 513;
+    tget_hei = 513;
     if(loadLabelFile(part_names_file,chain_names_file) != 0)
     {
         fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
         return -1;
     }
     
+    cv::Mat img_ori = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+    cv::Mat _img;
+    if(img_ori.rows == img_ori.cols)
+    {
+        //read image from input_folder_file
+        _img = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+    }
+    else
+    {
+        int img_size_max;
+        if(img_ori.rows > img_ori.cols) img_size_max = img_ori.rows;
+        else img_size_max = img_ori.cols;
+        cv::Mat img_temp(img_size_max,img_size_max, CV_8UC3, Scalar(128,128,128));
+        img_ori.copyTo(img_temp(cv::Rect((img_size_max - img_ori.cols)/2,(img_size_max - img_ori.rows)/2,img_ori.cols, img_ori.rows)));
+        _img = img_temp.clone();
+    }
+    
     // process image
-    cv::Mat _img,img;
-    //read image from input_folder_file
-    _img = cv::imread(input_folder_file, cv::IMREAD_COLOR);
+    cv::Mat img;
     // create a copy image to output_folder_file
     cv::imwrite(output_folder_file, _img);
-    valid_resolution(_img.cols, _img.rows, (int*) &tget_wid, (int*) &tget_hei); 
-    //this model use fixed 257x257 image with stride = 32
-    //tget_wid = 257;
-    //tget_hei = 257;
+    //valid_resolution(_img.cols, _img.rows, (int*) &tget_wid, (int*) &tget_hei); 
     cv::resize(_img, img, cv::Size(tget_wid, tget_hei), 0, 0, CV_INTER_LINEAR);
     //cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
     cv::imwrite(mat_out, img);
@@ -500,9 +514,9 @@ int postprocess()
 
     cv::Mat img = cv::imread(output_folder_file, cv::IMREAD_COLOR);
     
-    //tget_wid = 257;
-    //tget_hei = 257;
-    float scale = float(int(float(img.cols) / float(tget_wid) + 0.5));
+    float scale = float(img.cols) / float(tget_wid);
+    printf("Value of tget_wid=%f \n", float(tget_wid));
+    printf("Value of img.cols=%f \n", float(img.cols));
     printf("Value of scale=%f \n", scale);
     
     // save output data to txt file
