@@ -1,0 +1,1 @@
+example command: ./PoseNetDemo -model mobilenet -stride 16 -size 129 -ifile backpackman.jpg

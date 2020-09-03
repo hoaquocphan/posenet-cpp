@@ -65,6 +65,7 @@ using namespace std;
 int model=RESNET50;
 std::string model_name = RESNET_str;
 std::string stride_name;
+std::string size_name;
 std::string model_file;
 char input_folder[] = "images";
 char output_folder[] = "output";
@@ -77,6 +78,7 @@ std::map<int,std::string> label_chain_map;
 
 int tget_wid;
 int tget_hei;
+int process_image_size;
 int image_size_x;
 int image_size_y;
 int stride = 16; // default stride is 16
@@ -151,8 +153,8 @@ int parse_argument(int argc, char* argv[])
 			model_name = argv[index+1];
 		} else if (!strcmp("-stride", argv[index])) {
 			stride = atoi(argv[index+1]);
-		}  else if (!strcmp("-model_file", argv[index])) {
-			model_file = argv[index+1];
+		}  else if (!strcmp("-size", argv[index])) {
+			process_image_size = atoi(argv[index+1]);
         }else if (!strcmp("-ifile", argv[index])) {
             strcpy(input_file,argv[index+1]);
 		}
@@ -181,6 +183,10 @@ int prepare_environment()
     if(stride == 16) stride_name = "_stride16";
     else if(stride == 8) stride_name = "_stride8";
     else if(stride == 32) stride_name = "_stride32";
+
+    if(process_image_size == 129) size_name = "_129";
+    else if(process_image_size == 257) size_name = "_257";
+    else if(process_image_size == 513) size_name = "_513";
 
     DIR* dir = opendir("output");
     if (!dir) ret =mkdir("output", 0777);
@@ -247,8 +253,9 @@ void prepare_ONNX_Runtime() {
 
     //Config : model
     //std::string onnx_model_name = model_name + "-PoseNet.onnx";
-    std::string onnx_model_name = model_name + stride_name + ".onnx";
+    std::string onnx_model_name = model_name + stride_name + size_name + ".onnx";
     std::string onnx_model_path = "./models/" + onnx_model_name;
+    printf("onnx_model_name %s\n", onnx_model_name.c_str());
     //std::string onnx_model_path = model_file;
 
     //ONNX runtime load model
@@ -262,8 +269,10 @@ int preprocess_input() {
     // currently, we support fix size image only
     //tget_wid = 513;
     //tget_hei = 513;
-    tget_wid = 257;
-    tget_hei = 257;
+    //tget_wid = 257;
+    //tget_hei = 257;
+    tget_wid = process_image_size;
+    tget_hei = process_image_size;
     if(loadLabelFile(part_names_file,chain_names_file) != 0)
     {
         fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
