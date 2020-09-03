@@ -260,8 +260,10 @@ int preprocess_input() {
     int ret=0;
     int img_sizex, img_sizey, img_channels;
     // currently, we support fix size image only
-    tget_wid = 513;
-    tget_hei = 513;
+    //tget_wid = 513;
+    //tget_hei = 513;
+    tget_wid = 257;
+    tget_hei = 257;
     if(loadLabelFile(part_names_file,chain_names_file) != 0)
     {
         fprintf(stderr,"Fail to open or process file %s, %s\n",part_names_file.c_str(),chain_names_file.c_str());
