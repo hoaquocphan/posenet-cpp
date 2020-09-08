@@ -65,7 +65,7 @@ using namespace std;
 int model=RESNET50;
 std::string model_name = RESNET_str;
 std::string stride_name;
-std::string size_name;
+char size_name[10];
 std::string model_file;
 char input_folder[] = "images";
 char output_folder[] = "output";
@@ -184,9 +184,7 @@ int prepare_environment()
     else if(stride == 8) stride_name = "_stride8";
     else if(stride == 32) stride_name = "_stride32";
 
-    if(process_image_size == 129) size_name = "_129";
-    else if(process_image_size == 257) size_name = "_257";
-    else if(process_image_size == 513) size_name = "_513";
+    sprintf(size_name,"%d",process_image_size);
 
     DIR* dir = opendir("output");
     if (!dir) ret =mkdir("output", 0777);
@@ -199,7 +197,6 @@ int prepare_environment()
     strcat(output_folder_file,input_file);
 
     return ret;
-
 }
 /*****************************************
 * Function Name :  loadLabelFile
@@ -253,7 +250,15 @@ void prepare_ONNX_Runtime() {
 
     //Config : model
     //std::string onnx_model_name = model_name + "-PoseNet.onnx";
-    std::string onnx_model_name = model_name + stride_name + size_name + ".onnx";
+    std::string onnx_model_name;
+    if(model == MOBILENET)
+    {
+        onnx_model_name = model_name + stride_name + "_imagesize" + size_name + ".onnx";
+    }
+    else if(model == RESNET50)
+    {
+        onnx_model_name = model_name + stride_name + ".onnx";
+    }
     std::string onnx_model_path = "./models/" + onnx_model_name;
     printf("onnx_model_name %s\n", onnx_model_name.c_str());
     //std::string onnx_model_path = model_file;
@@ -314,13 +319,15 @@ int preprocess_input() {
 
     arr_size = ((tget_wid - 1) / stride) + 1;
 
-/*
+
     //for write image
     FILE *fp_image;
-    fp_image = fopen("output/image.txt", "w");
+    fp_image = fopen("output_data/image.txt", "w");
+
+    /*
     //for read image
     FILE *fp_image_read;
-    fp_image_read = fopen("output_data/image.txt", "r");
+    fp_image_read = fopen("output_data/py_image.txt", "r");
     int x=0;
     float num;
     while (fscanf(fp_image_read, "%f", &num)!=EOF)
@@ -328,7 +335,8 @@ int preprocess_input() {
         input_tensor_values[x] = num;
         x++;
     }
-*/
+    */
+
     if(model == MOBILENET)
     {
         int offs = 0;
@@ -346,20 +354,24 @@ int preprocess_input() {
     }
     else if(model == RESNET50)
     {
+        float image_data[img_sizex][img_sizey][img_channels];
         float image_net_mean[3] = {-123.15, -115.90, -103.06 };
         int offs = 0;
-        for (int c = 0; c < img_channels; c++){
-            for (int y = 0; y < img_sizey; y++){
-                for (int x = 0; x < img_sizex; x++, offs++){
+        for (int y = 0; y < img_sizey; y++){
+            for (int x = 0; x < img_sizex; x++){
+                for (int c = 0; c < img_channels; c++, offs++){
                     const int val(imgPixels[y * img_sizex + x].RGBA[c]);
                     input_tensor_values[offs] = (float)val + image_net_mean[c]; // for resnet
+                    fprintf(fp_image, "%f\n", input_tensor_values[offs]); // save output data to txt file
                 }
             }
         }
+
     }
+    
 
     //fclose(fp_image_read);
-    //fclose(fp_image);
+    fclose(fp_image);
 
     // create input tensor object from data values
     OrtMemoryInfo* memory_info;
@@ -492,6 +504,8 @@ int postprocess()
     float arr_heatmap_temp[NUM_KEYPOINTS][arr_size][arr_size];
     float arr_offset[arr_size][arr_size][NUM_KEYPOINTS*2];
     float arr_offset_temp[NUM_KEYPOINTS*2][arr_size][arr_size];
+    float arr_offset_temp2[arr_size][arr_size][NUM_KEYPOINTS*2];
+    float arr_temp[arr_size*arr_size*NUM_KEYPOINTS*2];
     float arr_fwd[arr_size][arr_size][NUM_CHAIN*2];
     float arr_fwd_temp[NUM_CHAIN*2][arr_size][arr_size];
     float arr_bwd[arr_size][arr_size][NUM_CHAIN*2];
@@ -547,122 +561,192 @@ int postprocess()
     FILE *fp_offset;
     FILE *fp_fwd;
     FILE *fp_bwd;
-    fp_heatmap = fopen("output/heatmap_result.txt", "w");
-    fp_offset = fopen("output/offsets_result.txt", "w");
-    fp_fwd = fopen("output/displacement_fwd_result.txt", "w");
-    fp_bwd = fopen("output/displacement_bwd_result.txt", "w");
+    fp_heatmap = fopen("output_data/heatmap_result.txt", "w");
+    fp_offset = fopen("output_data/offsets_result.txt", "w");
+    fp_fwd = fopen("output_data/displacement_fwd_result.txt", "w");
+    fp_bwd = fopen("output_data/displacement_bwd_result.txt", "w");
     
+    if(model == MOBILENET)
+    {
+        for (int a = 0; a < NUM_KEYPOINTS; a++)
+        {
+            for (int b = 0; b < arr_size; b++)
+            {
+                for (int c = 0; c < arr_size; c++,out_data_index++)
+                {
+                    arr_heatmap_temp[a][b][c] = sigmoid(out_data[headmap_id][out_data_index]);
+                    //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]);
+                    //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]); // save output data to txt file
+                    //fprintf(fp_heatmap, "%f\n", arr_heatmap_temp[a][b][c]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
+                }
+            }
+        }
+        
+        //transpose
+        for (int a = 0; a < arr_size; a++)
+        {
+            for (int b = 0; b < arr_size; b++)
+            {
+                for (int c = 0; c < NUM_KEYPOINTS; c++)
+                {
+                    arr_heatmap[a][b][c] =  arr_heatmap_temp[c][a][b];
+                    fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                }
+            }
+        }
 
-    for (int a = 0; a < NUM_KEYPOINTS; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
+        out_data_index=0;
+        for (int a = 0; a < NUM_KEYPOINTS*2; a++)
         {
-            for (int c = 0; c < arr_size; c++,out_data_index++)
+            for (int b = 0; b < arr_size; b++)
             {
-                arr_heatmap_temp[a][b][c] = sigmoid(out_data[headmap_id][out_data_index]);
-                //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]);
-                //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]); // save output data to txt file
-                //fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
+                for (int c = 0; c < arr_size; c++,out_data_index++)
+                {
+                    //arr_offset[a][b][c] = out_data[offset_id][out_data_index];
+                    arr_offset_temp[a][b][c] = out_data[offset_id][out_data_index];
+                    //fprintf(fp_offset, "%f\n", out_data[offset_id][out_data_index]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                }
             }
         }
-    }
-    //transpose
-    for (int a = 0; a < arr_size; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
+        
+        //transpose
+        for (int a = 0; a < arr_size; a++)
         {
-            for (int c = 0; c < NUM_KEYPOINTS; c++)
+            for (int b = 0; b < arr_size; b++)
             {
-                arr_heatmap[a][b][c] =  arr_heatmap_temp[c][a][b];
-                //fprintf(fp_offset, "%f\n", arr_offset[a][b][c]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                for (int c = 0; c < NUM_KEYPOINTS*2; c++)
+                {
+                    arr_offset[a][b][c] =  arr_offset_temp[c][a][b];
+                    fprintf(fp_offset, "%f\n", arr_offset[a][b][c]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                }
             }
         }
-    }
 
-    out_data_index=0;
-    for (int a = 0; a < NUM_KEYPOINTS*2; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
+        out_data_index=0;
+        for (int a = 0; a < NUM_CHAIN*2; a++)
         {
-            for (int c = 0; c < arr_size; c++,out_data_index++)
+            for (int b = 0; b < arr_size; b++)
             {
-                //arr_offset[a][b][c] = out_data[offset_id][out_data_index];
-                arr_offset_temp[a][b][c] = out_data[offset_id][out_data_index];
-                //fprintf(fp_offset, "%f\n", out_data[offset_id][out_data_index]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                for (int c = 0; c < arr_size; c++,out_data_index++)
+                {
+                    arr_fwd_temp[a][b][c] = out_data[fwd_id][out_data_index];
+                    //fprintf(fp_fwd, "%f\n", out_data[fwd_id][out_data_index]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_fwd[a][b][c]);
+                }
             }
         }
-    }
-    //transpose
-    for (int a = 0; a < arr_size; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
+        
+        //transpose
+        for (int a = 0; a < arr_size; a++)
         {
-            for (int c = 0; c < NUM_KEYPOINTS*2; c++)
+            for (int b = 0; b < arr_size; b++)
             {
-                arr_offset[a][b][c] =  arr_offset_temp[c][a][b];
-                fprintf(fp_offset, "%f\n", arr_offset[a][b][c]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                for (int c = 0; c < NUM_CHAIN*2; c++)
+                {
+                    arr_fwd[a][b][c] =  arr_fwd_temp[c][a][b];
+                    fprintf(fp_fwd, "%f\n", arr_fwd[a][b][c]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                }
             }
         }
-    }
 
-    out_data_index=0;
-    for (int a = 0; a < NUM_CHAIN*2; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
+        out_data_index=0;
+        for (int a = 0; a < NUM_CHAIN*2; a++)
         {
-            for (int c = 0; c < arr_size; c++,out_data_index++)
+            for (int b = 0; b < arr_size; b++)
             {
-                arr_fwd_temp[a][b][c] = out_data[fwd_id][out_data_index];
-                //fprintf(fp_fwd, "%f\n", out_data[fwd_id][out_data_index]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_fwd[a][b][c]);
+                for (int c = 0; c < arr_size; c++,out_data_index++)
+                {
+                    arr_bwd_temp[a][b][c] = out_data[bwd_id][out_data_index];
+                    //fprintf(fp_bwd, "%f\n", out_data[bwd_id][out_data_index]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_bwd[a][b][c]);
+                }
+            }
+        }
+        
+        //transpose
+        for (int a = 0; a < arr_size; a++)
+        {
+            for (int b = 0; b < arr_size; b++)
+            {
+                for (int c = 0; c < NUM_CHAIN*2; c++)
+                {
+                    arr_bwd[a][b][c] =  arr_bwd_temp[c][a][b];
+                    fprintf(fp_bwd, "%f\n", arr_bwd[a][b][c]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                }
             }
         }
     }
-    //transpose
-    for (int a = 0; a < arr_size; a++)
+    else if(model == RESNET50)
     {
-        for (int b = 0; b < arr_size; b++)
+        for (int a = 0; a < arr_size; a++)
         {
-            for (int c = 0; c < NUM_CHAIN*2; c++)
+            for (int b = 0; b < arr_size; b++)
             {
-                arr_fwd[a][b][c] =  arr_fwd_temp[c][a][b];
-                fprintf(fp_fwd, "%f\n", arr_fwd[a][b][c]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                for (int c = 0; c < NUM_KEYPOINTS; c++,out_data_index++)
+                {
+                    arr_heatmap[a][b][c] = sigmoid(out_data[headmap_id][out_data_index]);
+                    fprintf(fp_heatmap, "%f\n", arr_heatmap[a][b][c]); // save output data to txt file
+                    //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]);
+                    //fprintf(fp_heatmap, "%f\n", out_data[headmap_id][out_data_index]); // save output data to txt file
+                    //fprintf(fp_heatmap, "%f\n", arr_heatmap_temp[a][b][c]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_heatmap[a][b][c]);
+                }
             }
         }
-    }
 
-    out_data_index=0;
-    for (int a = 0; a < NUM_CHAIN*2; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
+        out_data_index=0;
+        for (int a = 0; a < arr_size; a++)
         {
-            for (int c = 0; c < arr_size; c++,out_data_index++)
+            for (int b = 0; b < arr_size; b++)
             {
-                arr_bwd_temp[a][b][c] = out_data[bwd_id][out_data_index];
-                //fprintf(fp_bwd, "%f\n", out_data[bwd_id][out_data_index]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_bwd[a][b][c]);
+                for (int c = 0; c < NUM_KEYPOINTS*2; c++,out_data_index++)
+                {
+                    //arr_offset[a][b][c] = out_data[offset_id][out_data_index];
+                    arr_offset[a][b][c] = out_data[offset_id][out_data_index];
+                    fprintf(fp_offset, "%f\n", arr_offset[a][b][c]); // save output data to txt file
+                    //fprintf(fp_offset, "%f\n", out_data[offset_id][out_data_index]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_offset[a][b][c]);
+                }
             }
         }
-    }
-    //transpose
-    for (int a = 0; a < arr_size; a++)
-    {
-        for (int b = 0; b < arr_size; b++)
-        {
-            for (int c = 0; c < NUM_CHAIN*2; c++)
-            {
-                arr_bwd[a][b][c] =  arr_bwd_temp[c][a][b];
-                fprintf(fp_bwd, "%f\n", arr_bwd[a][b][c]); // save output data to txt file
-                //printf("Value of n=%f \n", arr_offset[a][b][c]);
-            }
-        }
-    }
+        
 
+        out_data_index=0;
+        for (int a = 0; a < arr_size; a++)
+        {
+            for (int b = 0; b < arr_size; b++)
+            {
+                for (int c = 0; c < NUM_CHAIN*2; c++,out_data_index++)
+                {
+                    arr_fwd[a][b][c] = out_data[fwd_id][out_data_index];
+                    fprintf(fp_fwd, "%f\n", arr_fwd[a][b][c]); // save output data to txt file
+                    //fprintf(fp_fwd, "%f\n", out_data[fwd_id][out_data_index]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_fwd[a][b][c]);
+                }
+            }
+        }
+
+        out_data_index=0;
+        for (int a = 0; a < arr_size; a++)
+        {
+            for (int b = 0; b < arr_size; b++)
+            {
+                for (int c = 0; c < NUM_CHAIN*2; c++,out_data_index++)
+                {
+                    arr_bwd[a][b][c] = out_data[bwd_id][out_data_index];
+                    fprintf(fp_bwd, "%f\n", arr_bwd[a][b][c]); // save output data to txt file
+                    //fprintf(fp_bwd, "%f\n", out_data[bwd_id][out_data_index]); // save output data to txt file
+                    //printf("Value of n=%f \n", arr_bwd[a][b][c]);
+                }
+            }
+        }
+    }
     
     // save output data to txt file
     fclose(fp_heatmap);
